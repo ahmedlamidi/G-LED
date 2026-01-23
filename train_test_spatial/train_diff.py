@@ -39,14 +39,26 @@ def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler
 	for iteration, batch in tqdm(enumerate(data_loader)):
 		batch = batch.to(diff_args.device).float()
 		bsize = batch.shape[0]
-		ntime = batch.shape[1] 
-		batch_coarse      = down_sampler(batch.reshape([bsize*ntime,2,512,512]))
-		batch_coarse2fine = up_sampler(batch_coarse).reshape(batch.shape)
+		ntime = batch.shape[1]
+  
+		
+		# Reshape batch to [B*T, C, H, W] then back to [B, T, C, H, W]
+		# batch comes as [B, T, 1, 1400, 1000] from dataset
+		# batch = batch.reshape([bsize*ntime, num_velocity, 1440, 1000])
+		# batch = batch.reshape([bsize, ntime, num_velocity, 1440, 1000])
+		
+		# Use left half as condition, zero-pad to full size
+		# batch shape: [B, T, C, H, W] = [B, T, 2, 1400, 1000]
+		H, W = batch.shape[-2], batch.shape[-1]
+		batch_cond = batch[..., :W//2]  # [B, T, C, H, W//2]
+		batch = batch[...,W//2:]
+
+
 		#need # B x F x T x H x W
 		batch= batch.permute([0,2,1,3,4])
-		batch_coarse2fine = batch_coarse2fine.permute([0,2,1,3,4])
+		batch_cond = batch_cond.permute([0,2,1,3,4])
 		#print(batch.device)
-		loss=trainer(batch,cond_images=batch_coarse2fine,unet_number=1,ignore_time=False)
+		loss=trainer(batch,cond_images=batch_cond,unet_number=1,ignore_time=False)
 		trainer.update(unet_number=1)
 		loss_epoch.append(loss)
 	return trainer, sum(loss_epoch)/len(loss_epoch)
