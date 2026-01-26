@@ -20,8 +20,8 @@ def train_diff(diff_args,
 		model, loss = train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler)
 		if epoch % 1 ==0 and epoch > 0:
 			save_loss(diff_args, loss_list+[loss],epoch)
-			model.save(path=os.path.join(diff_args.model_save_path, 
-										 'model_epoch_' + str(epoch)))
+			# model.save(path=os.path.join(diff_args.model_save_path, 
+			# 							 'model_epoch_' + str(epoch)))
 		if epoch >= 1:
 			if loss < min(loss_list):
 				save_loss(diff_args, loss_list+[loss],epoch)

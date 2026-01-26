@@ -121,9 +121,9 @@ class dicom_dataset(Dataset):
             sino = sino.unsqueeze(0).unsqueeze(0)
 
             # Resize
-            sino = F.interpolate(
+            sino = F.interpolate(   
                 sino,
-                size=(512, 512),
+                size=(1024, 1024),
                 mode="nearest"   # correct for sinograms
             )
 
