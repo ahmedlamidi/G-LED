@@ -52,7 +52,7 @@ def convert_sinogram(ct_slice, dx, dy, dz):
     
     DSO = 1000
     ODD = 600  
-    angles_deg = np.arange(0, 360, (360/512), dtype=np.float32)
+    angles_deg = np.arange(0, 360, 1, dtype=np.float32)
     angles = np.deg2rad(angles_deg)  # ASTRA expects radians
     
     # generate params for the second part
@@ -62,7 +62,7 @@ def convert_sinogram(ct_slice, dx, dy, dz):
     )
         
     # Detector should cover the full object diagonal
-    det_count =  512
+    det_count =  720
     det_spacing = dx  
     
     proj_geom = astra.create_proj_geom('fanflat', det_spacing, det_count, angles, DSO, ODD)

@@ -30,7 +30,7 @@ class Args:
 		for finding the dynamics dir
 		"""
 		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/feb_12_512_model',
+								 default='output/feb_13_360_720_model',
 								 help='all the information of ks training')
 		"""
 		for diffusion model
@@ -103,8 +103,8 @@ if __name__ == '__main__':
 				   cond_images_channels=1, 
 				   memory_efficient=True, 
 				   dim_mults=(1, 2, 4, 8)).to(torch.device(diff_args.device))  #mid: mid channel (removed 8 to save memory)
-	image_sizes = (512)  # Reduced from 1400
-	image_width = (256)  # Reduced from 1000
+	image_sizes = (360)  # Reduced from 1400
+	image_width = (360)  # Reduced from 1000
 	imagen = ElucidatedImagen(
 		unets = (unet1),
 		image_sizes = image_sizes,
