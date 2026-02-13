@@ -1,7 +1,8 @@
 import torch
 import transformers
 from typing import List
-from transformers import T5Tokenizer, T5EncoderModel, T5Config
+from transformers import T5Tokenizer, T5Config
+from transformers.models.t5.modeling_t5 import T5EncoderModel
 from einops import rearrange
 
 transformers.logging.set_verbosity_error()

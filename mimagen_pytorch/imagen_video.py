@@ -1562,6 +1562,8 @@ class Unet3D(nn.Module):
         if exists(cond_images):
             assert cond_images.shape[1] == self.cond_images_channels, 'the number of channels on the conditioning image you are passing in does not match what you specified on initialiation of the unet'
             cond_images = resize_video_to(cond_images, x.shape[-1])
+           # print(cond_images.shape, "cond_images")
+            #print(x.shape, "x.shape")
             x = torch.cat((cond_images, x), dim = 1)
 
         # get time relative positions
@@ -1756,3 +1758,4 @@ class Unet3D(nn.Module):
             x = torch.cat((x, lowres_cond_img), dim = 1)
 
         return self.final_conv(x)
+	

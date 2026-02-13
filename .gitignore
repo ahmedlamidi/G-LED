@@ -1,0 +1,5 @@
+/venv
+/data/Dataset
+/data/LIDC_IDRI
+*slurm*
+/output

@@ -51,9 +51,10 @@ def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler
                 # Use left half as condition, zero-pad to full size
                 # batch shape: [B, T, C, H, W] = [B, T, 2, 1400, 1000]
 		H, W = batch.shape[-2], batch.shape[-1]
-		# Assuming [B, T, C, H, W]
-		batch_cond = batch[..., :W//2]  # Left half
-		batch = batch[..., W//2:]      # Right half
+		batch_cond = batch[..., :H//2, :]  # [B, T, C, H//2, W]
+		batch = batch[..., H//2:, :]
+		batch_cond = batch 
+
 		#np.save(f"save/batch_cond{iteration}", batch_cond)
 		#np.save(f"save/batch{iteration}", batch)
 		#print("here")
@@ -63,8 +64,10 @@ def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler
 		batch= batch.permute([0,2,1,3,4])
 		batch_cond = batch_cond.permute([0,2,1,3,4])
 		#print(batch.device)
-		loss=trainer(batch,cond_images=batch_cond,unet_number=1,ignore_time=False)
-		trainer.update(unet_number=1)
-		loss_epoch.append(loss)
+		#loss=trainer(batch,cond_images=batch_cond,unet_number=1,ignore_time=False)
+		#trainer.update(unet_number=1)
+		#loss_epoch.append(loss)
+	print("here")
+	exit(0)
 	return trainer, sum(loss_epoch)/len(loss_epoch)
 

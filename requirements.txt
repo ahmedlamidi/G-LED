@@ -1,0 +1,17 @@
+numpy
+SimpleITK
+matplotlib
+beartype
+kornia
+einops
+einops-exts
+transformers == 4.38.2
+pytorch_warmup
+datasets
+ema_pytorch
+accelerate
+pydantic
+imagen_pytorch
+torch==2.1.2
+astra
+itertools

@@ -17,6 +17,7 @@ from sequentialModel import SequentialModel as transformer
 sys.path.insert(0, './train_test_spatial')
 from test_diff import test_final_overall 
 from test_diff_ensamble import test_final_overall_ensamble
+from dicom_preprocess import dicom_dataset
 
 
 
@@ -27,7 +28,7 @@ class Args_final_eval:
 		for finding the dynamics dir
 		"""
 		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/bfs_les_2023_12_21_12_09_10',
+								 default='output/two_day_training_low',
 								 help='all the information of bfs training')
 		
 		"""
@@ -62,7 +63,7 @@ class Args_final_eval:
 		for seq_net_eval
 		"""
 		self.parser.add_argument("--test_Nt", 
-								 default=150,
+								 default=1,
 								 help = 'How many step you want to proceed! Should be divided by 10')
 		
 
@@ -106,38 +107,35 @@ if __name__ == '__main__':
 	"""
 	Fetch dataset
 	"""
-	data_set = bfs_dataset(data_location  = args_seq.data_location,
-						   trajec_max_len = args_final.trajec_max_len,
-						   start_n        = args_final.start_n,
-						   n_span         = args_final.n_span)
+	data_set = dicom_dataset(Interpolate=True)
 	
 	data_loader = DataLoader(dataset=data_set, 
 							 shuffle=False,
-							 batch_size=args_final.batch_size)
+							 batch_size=1)
 
 	
 	
 	"""
 	Fetch models
 	"""
-	model = transformer(args_seq).to(args_final.device).float()
-	print('Number of parameters: {}'.format(model._num_parameters()))
-	if args_final.use_best:
-		model.load_state_dict(torch.load(args_seq.current_model_save_path+'best_model_sofar'))
-	else:
-		model.load_state_dict(torch.load(args_seq.current_model_save_path+'model_epoch_'+str(args_final.Nt_read),map_location=torch.device(args_final.device)))	
+	# model = transformer(args_seq).to(args_final.device).float()
+	# print('Number of parameters: {}'.format(model._num_parameters()))
+	# if args_final.use_best:
+	# 	model.load_state_dict(torch.load(args_seq.current_model_save_path+'best_model_sofar'))
+	# else:
+	# 	model.load_state_dict(torch.load(args_seq.current_model_save_path+'model_epoch_'+str(args_final.Nt_read),map_location=torch.device(args_final.device)))	
 	
 	unet1 = Unet3D(dim=args_diff.unet_dim,
-				   cond_images_channels=2, 
+				   cond_images_channels=1, 
 				   memory_efficient=True, 
-				   dim_mults=(1, 2, 4, 8)).to(torch.device(args_diff.device))  #mid: mid channel
-	image_sizes = (512)
-	image_width = (512) 
+				   dim_mults=(1, 2)).to(torch.device(args_diff.device))  #mid: mid channel
+	image_sizes = (360)
+	image_width = (720) 
 	imagen = ElucidatedImagen(
             unets = (unet1),
             image_sizes = image_sizes,
             image_width = image_width,   
-            channels = 2,   # Han Gao add the input to this args explicity     
+            channels = 1,   # Han Gao add the input to this args explicity     
             random_crop_sizes = None,
             num_sample_steps = args_diff.num_sample_steps, # original is 10
             cond_drop_prob = 0.1,
@@ -156,11 +154,11 @@ if __name__ == '__main__':
             ).to(torch.device(args_final.device))
 	trainer = ImagenTrainer(imagen, device =torch.device(args_final.device))
 	trainer.load(path=args_diff.model_save_path+'/best_model_sofar')
-	test_final_overall_ensamble(args_final, 
+	test_final_overall(args_final, 
 					   args_seq, 
 					   args_diff, 
 					   trainer, 
-					   model,
+					   None,
 					   data_loader)
 	exit()
 	test_final_overall(args_final, 
@@ -169,6 +167,7 @@ if __name__ == '__main__':
 					   trainer, 
 					   model,
 					   data_loader)
+
 
 
 

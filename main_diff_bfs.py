@@ -19,6 +19,7 @@ sys.path.insert(0, './util')
 from utils import save_args, read_args_txt
 sys.path.insert(0, './data')
 from data_bfs_preprocess import bfs_dataset 
+from dicom_preprocess import dicom_dataset,Efficient_LIDC_DicomDataset
 sys.path.insert(0, './train_test_spatial')
 from  train_diff import train_diff
 
@@ -29,13 +30,13 @@ class Args:
 		for finding the dynamics dir
 		"""
 		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/bfs_les_2023_10_31_17_49_35',
+								 default='output/feb_12_512_model',
 								 help='all the information of ks training')
 		"""
 		for diffusion model
 		"""
 		self.parser.add_argument("--Nt",
-								 default = 10,
+								 default = 1,
 								 help = 'Time steps we use as a single seq')
 		self.parser.add_argument("--unet_dim", 
 								 default=32,
@@ -47,9 +48,9 @@ class Args:
 		"""
 		for training 
 		"""
-		self.parser.add_argument("--batch_size", default = 1)
-		self.parser.add_argument("--epoch_num", default = 20)
-		self.parser.add_argument("--device", type=str, default = "cuda:1")
+		self.parser.add_argument("--batch_size", default = 8)
+		self.parser.add_argument("--epoch_num", default = 500)
+		self.parser.add_argument("--device", type=str, default = "cuda:0")
 		self.parser.add_argument("--shuffle",default=True)
 		
 
@@ -87,28 +88,28 @@ if __name__ == '__main__':
 	"""
 	Fetch dataset
 	"""
-	data_set = bfs_dataset(data_location  = seq_args.data_location,
-						   trajec_max_len = diff_args.Nt,#seq_args.trajec_max_len,
-						   start_n        = seq_args.start_n,
-						   n_span         = seq_args.n_span)
+	print("here")
+	data_set = dicom_dataset(start_n=132)
+	#1327
+ 
 	data_loader = DataLoader(dataset=data_set, 
 							 shuffle=diff_args.shuffle,
-							 batch_size=diff_args.batch_size)
+							 batch_size=1)
 	
 	"""
 	Create diffusion model
 	"""
 	unet1 = Unet3D(dim=diff_args.unet_dim,
-				   cond_images_channels=2, 
+				   cond_images_channels=1, 
 				   memory_efficient=True, 
-				   dim_mults=(1, 2, 4, 8)).to(torch.device(diff_args.device))  #mid: mid channel
-	image_sizes = (512)
-	image_width = (512)
+				   dim_mults=(1, 2, 4, 8)).to(torch.device(diff_args.device))  #mid: mid channel (removed 8 to save memory)
+	image_sizes = (512)  # Reduced from 1400
+	image_width = (256)  # Reduced from 1000
 	imagen = ElucidatedImagen(
 		unets = (unet1),
 		image_sizes = image_sizes,
 		image_width = image_width,   
-		channels = 2,   # Han Gao add the input to this args explicity     
+		channels = 1,   # Match input channels (2 from sinogram duplication)     
 		random_crop_sizes = None,
 		num_sample_steps = diff_args.num_sample_steps, # original is 10
 		cond_drop_prob = 0.1,
