@@ -24,5 +24,5 @@ nvcc --version
 pip install -r requirements.txt
 nvidia-smi
 #srun --ntasks=1 --cpus-per-task=1 --exact visdom -port 8097 &
-srun python main_diff_bfs.py
+srun python visualize.py
 

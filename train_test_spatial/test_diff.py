@@ -72,7 +72,7 @@ def test_final(args_final,
                         num_velocity = batch.shape[2] if batch.ndim == 5 else 1  # Get actual channels from data
                         print(f"num_time: {num_time}, num_velocity: {num_velocity}")
                         H, W = batch.shape[-2], batch.shape[-1]
-                        batch_cond = batch[..., :H//2, :]  # [B, T, C, H//2, W]
+                        batch_cond = batch[..., :W//2]  # Left half
                        # batch = batch[..., H//2:, :]
  # [B, C,T,H,W]
                         batch_cond = batch_cond.permute(0, 2, 1, 3, 4)  # [B, C, T, H, W]
