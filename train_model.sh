@@ -1,9 +1,9 @@
 #!/bin/bash -l
 #SBATCH --job-name=ddpm-chest
-#SBATCH -p  Quick
+#SBATCH -p Quick
 #SBATCH --cpus-per-task=2
 #SBATCH --time=24:00:00
-#SBATCH --gres=gpu:A100:1
+#SBATCH --gres=gpu:1
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=ahmedlamidi@usf.edu
 #SBATCH --mem=64G
@@ -24,8 +24,9 @@ nvcc --version
 pip install -r requirements.txt
 nvidia-smi
 #srun --ntasks=1 --cpus-per-task=1 --exact visdom -port 8097 &
-srun main_diff_bfs.py
-#to start from saved model 
+srun python compare_ssim.py
+#to start from saved model
+
 #python main_diff_bfs.py --resume
 
 # srun python saved_ground_truth.py

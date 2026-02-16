@@ -30,7 +30,7 @@ class Args:
 		for finding the dynamics dir
 		"""
 		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/feb_13_360_720_model',
+								 default='output/feb_16_1024_512_model',
 								 help='all the information of ks training')
 		"""
 		for diffusion model

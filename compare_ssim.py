@@ -7,7 +7,7 @@ import os
 base_folder = 'output/feb_12_512_model/diffusion_folder/experiment_final/contour'
 
 # Ground truth folder
-ground_truth_folder = 'data/ground_truth'
+ground_truth_folder = 'output/feb_12_512_model/ground_truth'
 
 # Output folder for comparison images
 comparison_output_folder = 'output/feb_12_512_model/diffusion_folder/comparisons'
