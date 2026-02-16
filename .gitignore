@@ -3,3 +3,4 @@
 /data/LIDC_IDRI
 *slurm*
 /output
+/data/ground_truth

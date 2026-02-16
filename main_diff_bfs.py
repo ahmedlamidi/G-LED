@@ -52,6 +52,10 @@ class Args:
 		self.parser.add_argument("--epoch_num", default = 500)
 		self.parser.add_argument("--device", type=str, default = "cuda:0")
 		self.parser.add_argument("--shuffle",default=True)
+		self.parser.add_argument("--resume", action='store_true', 
+								 help='Resume training from checkpoint')
+		self.parser.add_argument("--checkpoint_path", type=str, default=None,
+								 help='Path to checkpoint file to resume from (default: best_model_sofar)')
 		
 
 
@@ -103,8 +107,8 @@ if __name__ == '__main__':
 				   cond_images_channels=1, 
 				   memory_efficient=True, 
 				   dim_mults=(1, 2, 4, 8)).to(torch.device(diff_args.device))  #mid: mid channel (removed 8 to save memory)
-	image_sizes = (360)  # Reduced from 1400
-	image_width = (360)  # Reduced from 1000
+	image_sizes = (1024)  # Reduced from 1400
+	image_width = (512)  # Reduced from 1000
 	imagen = ElucidatedImagen(
 		unets = (unet1),
 		image_sizes = image_sizes,
@@ -127,6 +131,19 @@ if __name__ == '__main__':
 		auto_normalize_img = False  # Han Gao make it false
 		).to(torch.device(diff_args.device))
 	trainer = ImagenTrainer(imagen, device =torch.device(diff_args.device))
+	
+	# Resume from checkpoint if specified
+	if diff_args.resume:
+		checkpoint_path = diff_args.checkpoint_path
+		if checkpoint_path is None:
+			# Default to best_model_sofar
+			checkpoint_path = os.path.join(diff_args.model_save_path, 'best_model_sofar')
+		if os.path.exists(checkpoint_path):
+			print(f"Resuming training from checkpoint: {checkpoint_path}")
+			trainer.load(checkpoint_path)
+		else:
+			print(f"Warning: Checkpoint not found at {checkpoint_path}, starting fresh training")
+	
 	train_diff(diff_args=diff_args,
                seq_args=seq_args,
                trainer=trainer,

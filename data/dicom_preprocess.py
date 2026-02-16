@@ -52,7 +52,7 @@ def convert_sinogram(ct_slice, dx, dy, dz):
     
     DSO = 1000
     ODD = 600  
-    angles_deg = np.arange(0, 360, (360 / 512), dtype=np.float32)
+    angles_deg = np.arange(0, 360, (360 / 1024), dtype=np.float32)
     angles = np.deg2rad(angles_deg)  # ASTRA expects radians
     
     # generate params for the second part
@@ -62,7 +62,7 @@ def convert_sinogram(ct_slice, dx, dy, dz):
     )
         
     # Detector should cover the full object diagonal
-    det_count =  512
+    det_count =  1024
     det_spacing = dx  
     
     proj_geom = astra.create_proj_geom('fanflat', det_spacing, det_count, angles, DSO, ODD)
@@ -228,13 +228,28 @@ class Efficient_LIDC_DicomDataset(Dataset):
 
 
 if __name__ == '__main__':
-	dset = Efficient_LIDC_DicomDataset()
-
-	print("here")
-	dloader = DataLoader(dataset=dset, batch_size = 5,shuffle = True)
-	print("here")
-	for iteration, batch in enumerate(dloader):
-		print(batch.shape)
+	# Create ground truth folder if it doesn't exist
+	ground_truth_dir = "data/ground_truth"
+	os.makedirs(ground_truth_dir, exist_ok=True)
+	
+	# Use dicom_dataset to load data
+	dset = dicom_dataset(Interpolate=True)
+	
+	print(f"Total samples in dataset: {len(dset)}")
+	
+	# Save first 20 sinograms as batch0.npy through batch19.npy
+	print("Saving first 20 sinograms as batch files...")
+	for i in range(min(20, len(dset))):
+		# Get sinogram and squeeze to [H, W]
+		sino_np = dset.sinograms_torch[i].squeeze().numpy()
+		
+		# Save as batchX.npy
+		filename = f"batch{i}.npy"
+		filepath = os.path.join(ground_truth_dir, filename)
+		np.save(filepath, sino_np)
+		print(f"Saved {filename} with shape {sino_np.shape}")
+	
+	print(f"Done! Saved 20 batch files to {ground_truth_dir}")
 
 
 

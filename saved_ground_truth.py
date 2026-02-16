@@ -166,79 +166,6 @@ def save_ct_volume_as_dicom(
         ds.save_as(str(filename), write_like_original=False)
 
 
-def _apply_fov_mask_circle(arr_3d: np.ndarray, radius_factor: float = 0.99) -> np.ndarray:
-    H, W =  [1440, 1000]
-    yy, xx = np.ogrid[-H//2:H//2, -W//2:W//2]
-    r2 = (min(H, W) * 0.5 * float(radius_factor)) ** 2
-    mask = ((xx.astype(np.float32) ** 2 + yy.astype(np.float32) ** 2) <= r2).astype(np.float32)
-    return arr_3d * mask[None, ...]
-
-def apply_post(
-    recon: np.ndarray,
-    mask_circle_enabled=True,
-    mask_radius_factor=1.0,
-    normalization_mode="percentile",
-    percentiles=(2, 98),
-    scale_factor=1.1,
-    clip_range=None,
-    target_dtype=np.float32,
-    fixed_range=(0, 1)
-) -> np.ndarray:
-    if mask_circle_enabled:
-        recon = _apply_fov_mask_circle(recon, radius_factor=mask_radius_factor)
-
-    mode = normalization_mode
-    print(np.min(recon), np.max(recon))
-
-    if mode == "minmax_per_slice":
-        for s in range(recon.shape[0]):
-            v = recon[s]
-            vmin, vmax = float(np.min(v)), float(np.max(v))
-            if vmax > vmin:
-                recon[s] = (v - vmin) / (vmax - vmin)
-            else:
-                recon[s] = 0.0
-
-    elif mode == "percentile":
-        p_lo, p_hi = percentiles
-        v = recon
-        lo = np.percentile(v, p_lo)
-        hi = np.percentile(v, p_hi)
-        if hi > lo:
-            recon = np.clip((v - lo) / (hi - lo), 0.0, 1.0)
-
-    elif mode == "minmax":
-        gmin = float(np.min(recon))
-        gmax = float(np.max(recon))
-        if gmax > gmin:
-            recon = (recon - gmin) / (gmax - gmin)
-        else:
-            recon = np.zeros_like(recon, dtype=np.float32)
-
-    elif mode == "fixed":
-        lo, hi = fixed_range
-        if hi <= lo:
-            raise ValueError(f"[global_fixed] invalid fixed_range: {lo}, {hi}")
-        recon = np.clip((recon - lo) / (hi - lo), 0.0, 1.0)
-
-    elif mode in (None, "none"):
-        pass
-
-    else:
-        raise ValueError(f"Unsupported normalize mode: {mode}")
-
-    if mask_circle_enabled:
-        recon = _apply_fov_mask_circle(recon, radius_factor=mask_radius_factor)
-
-    if scale_factor != 1.0:
-        recon = recon * scale_factor
-
-    if clip_range is not None:
-        lo, hi = float(clip_range[0]), float(clip_range[1])
-        recon = np.clip(recon, lo, hi)
-
-    return recon.astype(target_dtype, copy=False)
-
 
 def projection(img_array, spacing):
     sino_AD = np.asarray(img_array, dtype=np.float32)
@@ -250,7 +177,7 @@ def projection(img_array, spacing):
     DSO = 1000  
     ODD = 600  
 
-    angles_deg = np.arange(0, 180, 0.1, dtype=np.float32)
+    angles_deg = np.arange(0, 360, (360/1024), dtype=np.float32)
     angles = np.deg2rad(angles_deg)  # ASTRA expects radians
 
     spacing_xyz = spacing
@@ -315,12 +242,6 @@ def read_dicom_as_numpy(path):
     vol_zyx = sitk.GetArrayFromImage(img)
     return vol_zyx
 
-def interpolate_to_512x512(slice_np):
-    tensor = torch.from_numpy(slice_np).float().unsqueeze(0).unsqueeze(0)
-    tensor = F.interpolate(tensor, size=(512, 512), mode="nearest")
-    tensor = tensor.squeeze(0).squeeze(0)
-    return tensor.cpu().numpy()
-
 def reconstruct_from_projection(sino):
     # Assumes util/projection.py has a function 'backproject' that takes a sinogram and returns a reconstruction
     recon = projection(sino)
@@ -370,7 +291,7 @@ def convert_sinogram(ct_slice, dx, dy, dz):
     
     DSO = 1000  
     ODD = 600  
-    angles_deg = np.arange(0, 180, 0.1, dtype=np.float32)
+    angles_deg = np.arange(0, 360, 360/1024, dtype=np.float32)
     angles = np.deg2rad(angles_deg)  # ASTRA expects radians
     
     # generate params for the second part
@@ -380,7 +301,7 @@ def convert_sinogram(ct_slice, dx, dy, dz):
     )
         
     # Detector should cover the full object diagonal
-    det_count =  1500
+    det_count =  1024
     det_spacing = dx  
     
     proj_geom = astra.create_proj_geom('fanflat', det_spacing, det_count, angles, DSO, ODD)
@@ -426,12 +347,12 @@ def main(dicom_path):
             
         # Normalize to [-1, 1]
         sino_min, sino_max = sino.min(), sino.max()
-        #print(sino_min, sino_max)
+        print(sino_min, sino_max)
         sino = projection(sino, spacing)
         sino = convert_mu_to_hu(sino) 
         sino= np.nan_to_num(sino,nan=-1024,posinf=3071,neginf=-1024)
         print(sino.min(), sino.max())
-        #save_ct_volume_as_dicom(sino, spacing[::-1], Path("/home/a/ahmedlamidi/G-led/dicom"), patient_id ="hi",study_uid = generate_uid(),series_uid= generate_uid())
+        save_ct_volume_as_dicom(sino, spacing[::-1], Path("/home/a/ahmedlamidi/G-led/dicom"), patient_id ="hi",study_uid = generate_uid(),series_uid= generate_uid())
         print("here")
         exit(0)
         #if sino_max > sino_min:

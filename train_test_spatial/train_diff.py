@@ -10,9 +10,24 @@ from utils import save_loss
 def train_diff(diff_args,
 			   seq_args,
 			   trainer,
-			   data_loader):
+			   data_loader,
+			   start_epoch=0):
+	# Load previous loss list if resuming
 	loss_list = []
-	for epoch in range(diff_args.epoch_num):
+	loss_file = os.path.join(diff_args.logging_path, 'loss_curve.txt')
+	if start_epoch > 0 and os.path.exists(loss_file):
+		loss_list = list(np.loadtxt(loss_file))
+		print(f"Loaded {len(loss_list)} previous loss values")
+	
+	# Try to get start_epoch from saved checkpoint epoch file
+	epoch_file = os.path.join(diff_args.model_save_path, 'best_model_sofar_epoch')
+	if start_epoch == 0 and os.path.exists(epoch_file):
+		saved_epoch = int(np.loadtxt(epoch_file)[0])
+		if hasattr(diff_args, 'resume') and diff_args.resume:
+			start_epoch = saved_epoch + 1
+			print(f"Resuming from epoch {start_epoch}")
+	
+	for epoch in range(start_epoch, diff_args.epoch_num):
 		down_sampler = torch.nn.Upsample(size=seq_args.coarse_dim, 
 								     	 mode=seq_args.coarse_mode)
 		up_sampler   = torch.nn.Upsample(size=[512, 512], 
@@ -23,6 +38,17 @@ def train_diff(diff_args,
 			#save_loss(diff_args, loss_list+[loss],epoch)
 			#model.save(path=os.path.join(diff_args.model_save_path, 
 			#							 'model_epoch_' + str(epoch)))
+		
+		# Save checkpoint every 10 epochs for resumability
+		if epoch > 0 and epoch % 10 == 0:
+			model.save(path=os.path.join(diff_args.model_save_path, 
+										'checkpoint_epoch_' + str(epoch)))
+			print(f"Saved checkpoint at epoch {epoch}")
+		
+		# Save latest checkpoint (overwritten each epoch for quick resume)
+		model.save(path=os.path.join(diff_args.model_save_path, 'latest_checkpoint'))
+		np.savetxt(os.path.join(diff_args.model_save_path, 'latest_epoch'), np.array([epoch]))
+		
 		if epoch >= 1:
 			if loss < min(loss_list):
 				save_loss(diff_args, loss_list+[loss],epoch)
