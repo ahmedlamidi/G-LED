@@ -223,18 +223,13 @@ class Efficient_LIDC_DicomDataset(Dataset):
         # )
 
 
-#Need to basically make a dictionary of all the sub FOlders of LIDC_IDRI
-# also need to compute the get_item should be the index of the file within the folder that it is in
-# len should be the sum of all the dictionary values
-
-
 if __name__ == '__main__':
 	# Create ground truth folder if it doesn't exist
-	ground_truth_dir = "data/ground_truth"
+	ground_truth_dir = "output/feb_12_512_model/ground_truth"
 	os.makedirs(ground_truth_dir, exist_ok=True)
 	
 	# Use dicom_dataset to load data
-	dset = dicom_dataset(Interpolate=True, detector_count= 512, angle_step=(360/512))
+	dset = dicom_dataset(Interpolate=True, detector_count= 512, angle_step=(360/512), data_path="data/test_data")
 	
 	print(f"Total samples in dataset: {len(dset)}")
 	

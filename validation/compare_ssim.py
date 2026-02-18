@@ -1,6 +1,7 @@
 import numpy as np
 from matplotlib import pyplot as plt
 from skimage.metrics import structural_similarity as ssim
+from skimage.metrics import peak_signal_noise_ratio as psnr
 import os
 
 # Base folder containing all batch folders (generated outputs)
@@ -76,6 +77,9 @@ for batch_name in batch_folders:
         # Calculate SSIM between generated and right side of ground truth
         ssim_value = ssim(gt_right_norm, img_gen_norm, data_range=1.0)
         
+        # Calculate PSNR between generated and right side of ground truth
+        psnr_value = psnr(gt_right_norm, img_gen_norm, data_range=1.0)
+        
         # Concatenate left side (condition) with generated and with ground truth right
         combined_generated = np.concatenate([img_cond_norm, img_gen_norm], axis=1)
         combined_gt = np.concatenate([gt_left_norm, gt_right_norm], axis=1)
@@ -93,8 +97,8 @@ for batch_name in batch_folders:
         axes[1].set_title('Condition + Generated')
         axes[1].axis('off')
         
-        # Set SSIM as the main title
-        fig.suptitle(f'SSIM: {ssim_value:.4f}', fontsize=16, fontweight='bold')
+        # Set SSIM and PSNR as the main title
+        fig.suptitle(f'SSIM: {ssim_value:.4f} | PSNR: {psnr_value:.2f} dB', fontsize=16, fontweight='bold')
         
         plt.tight_layout()
         
@@ -103,7 +107,7 @@ for batch_name in batch_folders:
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
         plt.close()
         
-        print(f"{batch_name}: SSIM = {ssim_value:.4f} -> Saved to {output_path}")
+        print(f"{batch_name}: SSIM = {ssim_value:.4f}, PSNR = {psnr_value:.2f} dB -> Saved to {output_path}")
         
     except FileNotFoundError as e:
         print(f"Error processing {batch_name}: File not found - {e}")

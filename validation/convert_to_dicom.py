@@ -6,6 +6,8 @@ import datetime
 import SimpleITK as sitk
 from pydicom.dataset import Dataset, FileDataset
 from pydicom.uid import generate_uid, CTImageStorage, ExplicitVRLittleEndian
+from skimage.metrics import structural_similarity as ssim
+from skimage.metrics import peak_signal_noise_ratio as psnr
 
 
 def convert_hu_to_mu(ct_slice):
@@ -35,7 +37,7 @@ def create_sinogram_from_dicom(ct_slice, dx, dy):
     )
     
     # Detector should cover the full object diagonal (matching saved_ground_truth.py)
-    det_count = 1500
+    det_count = 512
     det_spacing = dx  
     
     proj_geom = astra.create_proj_geom('fanflat', det_spacing, det_count, angles, DSO, ODD)
@@ -380,6 +382,9 @@ if __name__ == '__main__':
     # Generate shared UIDs for the study
     study_uid = generate_uid()
     
+    # List to store metrics for all batches
+    metrics_list = []
+    
     for batch_name in batch_folders:
         batch_path = os.path.join(base_folder, batch_name)
         batch_num = int(batch_name.replace('batch', ''))
@@ -440,11 +445,58 @@ if __name__ == '__main__':
             print(f"  Saved ground truth DICOM to: {gt_filepath}")
             print(f"  GT HU range: [{gt_hu.min():.1f}, {gt_hu.max():.1f}]")
             
+            # Calculate SSIM and PSNR between generated and ground truth
+            # Normalize both to [0, 1] for metric calculation
+            def normalize(img):
+                img_min, img_max = img.min(), img.max()
+                if img_max > img_min:
+                    return (img - img_min) / (img_max - img_min)
+                return img
+            
+            recon_norm = normalize(recon_hu)
+            gt_norm = normalize(gt_hu)
+            
+            ssim_value = ssim(gt_norm, recon_norm, data_range=1.0)
+            psnr_value = psnr(gt_norm, recon_norm, data_range=1.0)
+            
+            metrics_list.append({
+                'batch': batch_name,
+                'ssim': ssim_value,
+                'psnr': psnr_value
+            })
+            
+            print(f"  SSIM: {ssim_value:.4f}, PSNR: {psnr_value:.2f} dB")
+            
         except FileNotFoundError as e:
             print(f"Error processing {batch_name}: File not found - {e}")
         except Exception as e:
             print(f"Error processing {batch_name}: {e}")
             import traceback
             traceback.print_exc()
+    
+    # Save metrics to file
+    metrics_file = dicom_output_folder / 'metrics.txt'
+    with open(metrics_file, 'w') as f:
+        f.write("Batch\tSSIM\tPSNR (dB)\n")
+        f.write("-" * 40 + "\n")
+        for m in metrics_list:
+            f.write(f"{m['batch']}\t{m['ssim']:.4f}\t{m['psnr']:.2f}\n")
+        
+        # Calculate and write averages
+        if metrics_list:
+            avg_ssim = np.mean([m['ssim'] for m in metrics_list])
+            avg_psnr = np.mean([m['psnr'] for m in metrics_list])
+            f.write("-" * 40 + "\n")
+            f.write(f"Average\t{avg_ssim:.4f}\t{avg_psnr:.2f}\n")
+    
+    print(f"\nMetrics saved to {metrics_file}")
+    
+    # Also print summary
+    if metrics_list:
+        avg_ssim = np.mean([m['ssim'] for m in metrics_list])
+        avg_psnr = np.mean([m['psnr'] for m in metrics_list])
+        print(f"\n=== Summary ===")
+        print(f"Average SSIM: {avg_ssim:.4f}")
+        print(f"Average PSNR: {avg_psnr:.2f} dB")
     
     print(f"\nDone! All DICOM files saved to {dicom_output_folder}")
