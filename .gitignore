@@ -2,5 +2,7 @@
 /data/Dataset
 /data/LIDC_IDRI
 *slurm*
+*dcm*
 /output
 /data/ground_truth
+/data/test_data

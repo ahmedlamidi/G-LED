@@ -92,8 +92,7 @@ if __name__ == '__main__':
 	"""
 	Fetch dataset
 	"""
-	print("here")
-	data_set = dicom_dataset(start_n=132)
+	data_set = dicom_dataset(start_n=132, detector_count=1024, angle_step=(360/1024))
 	#1327
  
 	data_loader = DataLoader(dataset=data_set, 

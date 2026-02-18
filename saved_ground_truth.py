@@ -67,7 +67,7 @@ def save_ct_volume_as_dicom(
 
     for z in range(Z):
         # Build unique file path
-        filename = out_dir / f"slice_360_01.dcm"
+        filename = out_dir / f"slice_1024_512.dcm"
 
         # Create minimal file meta information
         file_meta = Dataset()
@@ -301,7 +301,7 @@ def convert_sinogram(ct_slice, dx, dy, dz):
     )
         
     # Detector should cover the full object diagonal
-    det_count =  1024
+    det_count =  512
     det_spacing = dx  
     
     proj_geom = astra.create_proj_geom('fanflat', det_spacing, det_count, angles, DSO, ODD)

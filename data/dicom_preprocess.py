@@ -40,7 +40,7 @@ def convert_hu_to_mu(ct_slice):
     return mu
 
 	#Need to convert to sinogram and visualize
-def convert_sinogram(ct_slice, dx, dy, dz):
+def convert_sinogram(ct_slice, dx, dy, dz, detector_count, angle_step):
     
     #det count should be width of a pixel
     #dx_mm which is det_spacing is dx_mm
@@ -52,7 +52,7 @@ def convert_sinogram(ct_slice, dx, dy, dz):
     
     DSO = 1000
     ODD = 600  
-    angles_deg = np.arange(0, 360, (360 / 512), dtype=np.float32)
+    angles_deg = np.arange(0, 360, angle_step, dtype=np.float32)
     angles = np.deg2rad(angles_deg)  # ASTRA expects radians
     
     # generate params for the second part
@@ -62,7 +62,7 @@ def convert_sinogram(ct_slice, dx, dy, dz):
     )
         
     # Detector should cover the full object diagonal
-    det_count =  512
+    det_count = detector_count
     det_spacing = dx  
     
     proj_geom = astra.create_proj_geom('fanflat', det_spacing, det_count, angles, DSO, ODD)
@@ -111,7 +111,8 @@ def load_series_from(path):
 #sinograms = [convert_sinogram(slice, spacing[0], spacing[1], spacing[2]) for slice in vol_zyx]
 
 class dicom_dataset(Dataset):
-    def __init__(self, data_path="data/Dataset", trajec_max_len=50, start_n=0, Interpolate = False):
+    def __init__(self, data_path="data/Dataset", trajec_max_len=50, start_n=0, Interpolate = False,
+                 detector_count=1024, angle_step=(360/ 1024)):
         print("also here ")
         total_series = load_series_from(data_path)
         
@@ -123,7 +124,7 @@ class dicom_dataset(Dataset):
             if Interpolate:
                 vol_zyx = vol_zyx[:20]
             for ind in range(len(vol_zyx)):
-                sino = convert_sinogram(vol_zyx[ind], spacing[0], spacing[1], spacing[2])
+                sino = convert_sinogram(vol_zyx[ind], spacing[0], spacing[1], spacing[2],detector_count, angle_step)
                 # Normalize to [-1, 1]
                 sino_min, sino_max = sino.min(), sino.max()
                 if sino_max > sino_min:
@@ -187,32 +188,32 @@ class Efficient_LIDC_DicomDataset(Dataset):
     def __len__(self):
         return len(self.index_map)
 
-    def __getitem__(self, index):
-        patient_id, study_id, series_id, dicom_path = self.index_map[index]
+    # def __getitem__(self, index):
+    #     patient_id, study_id, series_id, dicom_path = self.index_map[index]
 
 
-        #print(dicom_path)
-       # exit(0)
-        # ---- Load single DICOM slice ----
-        vol_zyx, spacing = load_series_from(dicom_path)
+    #     #print(dicom_path)
+    #    # exit(0)
+    #     # ---- Load single DICOM slice ----
+    #     vol_zyx, spacing = load_series_from(dicom_path)
 
-        # If load_series_from returns a single slice wrapped as volume
+    #     # If load_series_from returns a single slice wrapped as volume
 
-        sino = convert_sinogram(vol_zyx[0], spacing[0], spacing[1], spacing[2])
+    #     sino = convert_sinogram(vol_zyx[0], spacing[0], spacing[1], spacing[2])
         
-        # Normalize to [-1, 1]
-        sino_min, sino_max = sino.min(), sino.max()
-        if sino_max > sino_min:
-            sino = 2.0 * (sino - sino_min) / (sino_max - sino_min) - 1.0
+    #     # Normalize to [-1, 1]
+    #     sino_min, sino_max = sino.min(), sino.max()
+    #     if sino_max > sino_min:
+    #         sino = 2.0 * (sino - sino_min) / (sino_max - sino_min) - 1.0
                     
-        # NumPy -> Torch
-        # sino = torch.from_numpy(sino).float()
+    #     # NumPy -> Torch
+    #     # sino = torch.from_numpy(sino).float()
         
-        # sino = sino.unsqueeze(0).unsqueeze(0)
+    #     # sino = sino.unsqueeze(0).unsqueeze(0)
         
         
-        sino = torch.from_numpy(sino).float().unsqueeze(0).unsqueeze(0)
-        return sino
+    #     sino = torch.from_numpy(sino).float().unsqueeze(0).unsqueeze(0)
+    #     return sino
 
         # Resize
         # sino = F.interpolate(   
@@ -233,7 +234,7 @@ if __name__ == '__main__':
 	os.makedirs(ground_truth_dir, exist_ok=True)
 	
 	# Use dicom_dataset to load data
-	dset = dicom_dataset(Interpolate=True)
+	dset = dicom_dataset(Interpolate=True, detector_count= 512, angle_step=(360/512))
 	
 	print(f"Total samples in dataset: {len(dset)}")
 	

@@ -48,7 +48,7 @@ def save_args_sample(args,name):
 def read_args_txt(args, argtxt):
 	#args.parser.parse_args(namespace=args.update_args_no_folder_create()) 
 	f = open (argtxt, "r")   
-	args = args.parser.parse_args(namespace=argparse.Namespace(**json.loads(f.read())))
+	args = args.parser.parse_args(args=[], namespace=argparse.Namespace(**json.loads(f.read())))
 	return args
 	return t
 
