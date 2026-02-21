@@ -107,7 +107,7 @@ if __name__ == '__main__':
 				   memory_efficient=True, 
 				   dim_mults=(1, 2, 4, 8)).to(torch.device(diff_args.device))  #mid: mid channel (removed 8 to save memory)
 	image_sizes = (720)  # Reduced from 1400
-	image_width = (432)  # Reduced from 1000
+	image_width = (448)  # Reduced from 1000
 	imagen = ElucidatedImagen(
 		unets = (unet1),
 		image_sizes = image_sizes,
