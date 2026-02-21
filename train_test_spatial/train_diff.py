@@ -96,7 +96,7 @@ def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler
 				# Reshape to 4D for padding (F.pad reflect doesn't support 5D)
 				B, T, C, H, W_orig = tensor.shape
 				tensor = tensor.reshape(B * T, C, H, W_orig)
-				tensor = F.pad(tensor, (0, pad_w), mode='reflect')
+				tensor = F.pad(tensor, (0, pad_w, 0, 0), mode='reflect')
 				tensor = tensor.reshape(B, T, C, H, W_orig + pad_w)
 			return tensor
 		
