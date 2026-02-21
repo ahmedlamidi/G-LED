@@ -122,7 +122,7 @@ class dicom_dataset(Dataset):
         for series in total_series:
             vol_zyx, spacing = series
             if Interpolate:
-                vol_zyx = vol_zyx[:20]
+                vol_zyx = vol_zyx[:100]
             for ind in range(len(vol_zyx)):
                 sino = convert_sinogram(vol_zyx[ind], spacing[0], spacing[1], spacing[2],detector_count, angle_step)
                 # Normalize to [-1, 1]
@@ -235,7 +235,7 @@ if __name__ == '__main__':
 	
 	# Save first 20 sinograms as batch0.npy through batch19.npy
 	print("Saving first 20 sinograms as batch files...")
-	for i in range(min(20, len(dset))):
+	for i in range(min(100, len(dset))):
 		# Get sinogram and squeeze to [H, W]
 		sino_np = dset.sinograms_torch[i].squeeze().numpy()
 		

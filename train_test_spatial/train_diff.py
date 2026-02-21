@@ -1,5 +1,6 @@
 from tqdm import tqdm
 import torch
+import torch.nn.functional as F
 import pdb
 import sys
 import os
@@ -30,7 +31,7 @@ def train_diff(diff_args,
 	for epoch in range(start_epoch, diff_args.epoch_num):
 		down_sampler = torch.nn.Upsample(size=seq_args.coarse_dim, 
 								     	 mode=seq_args.coarse_mode)
-		up_sampler   = torch.nn.Upsample(size=[512, 512], 
+		up_sampler   = torch.nn.Upsample(size=[720, 448], 
 								     	 mode=seq_args.coarse_mode)
 		model, loss = train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler)
 		if epoch % 1 ==0 and epoch > 0:
@@ -50,7 +51,7 @@ def train_diff(diff_args,
 		np.savetxt(os.path.join(diff_args.model_save_path, 'latest_epoch'), np.array([epoch]))
 		
 		if epoch >= 1:
-			if loss < min(loss_list):
+			if len(loss_list) == 0 or loss < min(loss_list):
 				save_loss(diff_args, loss_list+[loss],epoch)
 				model.save(path=os.path.join(diff_args.model_save_path, 
 											'best_model_sofar'))
@@ -74,16 +75,33 @@ def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler
                 # batch = batch.reshape([bsize*ntime, num_velocity, 1440, 1000])
                 # batch = batch.reshape([bsize, ntime, num_velocity, 1440, 1000])
 		
-                # Use left half as condition, zero-pad to full size
-                # batch shape: [B, T, C, H, W] = [B, T, 2, 1400, 1000]
+                # Use 50% condition / 53% target split with padding to divisible by 16
+                # batch shape: [B, T, C, H, W] = [B, T, 1, 720, 820]
 		H, W = batch.shape[-2], batch.shape[-1]
 		# Assuming [B, T, C, H, W]
+		# cond_width = int(W * 0.50)   # 50% condition = 410
+		# target_width = int(W * 0.53) # 53% target = 435
+		
+		# batch_cond = batch[..., :cond_width]           # First 50%
+		# batch = batch[..., (W - target_width):]        # Last 53%
+		
 		batch_cond = batch[..., :W//2]  # Left half
 		batch = batch[..., W//2:]      # Right half
-		#np.save(f"save/batch_cond{iteration}", batch_cond)
-		#np.save(f"save/batch{iteration}", batch)
-		#print("here")
-		#exit(0)
+		# Pad width to divisible by 16
+		def pad_width_to_16(tensor):
+			# tensor shape: [B, T, C, H, W]
+			w = tensor.shape[-1]
+			pad_w = (16 - w % 16) % 16
+			if pad_w > 0:
+				# Reshape to 4D for padding (F.pad reflect doesn't support 5D)
+				B, T, C, H, W_orig = tensor.shape
+				tensor = tensor.reshape(B * T, C, H, W_orig)
+				tensor = F.pad(tensor, (0, pad_w), mode='reflect')
+				tensor = tensor.reshape(B, T, C, H, W_orig + pad_w)
+			return tensor
+		
+		batch_cond = pad_width_to_16(batch_cond)
+		batch = pad_width_to_16(batch)            
 
 		#need # B x F x T x H x W
 		batch= batch.permute([0,2,1,3,4])

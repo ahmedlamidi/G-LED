@@ -20,6 +20,9 @@ batch_folders.sort(key=lambda x: int(x.replace('batch', '')))
 
 print(f"Found {len(batch_folders)} batch folders")
 
+# Collect metrics for saving
+metrics_list = []
+
 for batch_name in batch_folders:
     output_folder = os.path.join(base_folder, batch_name)
     batch_num = batch_name.replace('batch', '')
@@ -107,6 +110,13 @@ for batch_name in batch_folders:
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
         plt.close()
         
+        # Store metrics
+        metrics_list.append({
+            'batch': batch_name,
+            'ssim': ssim_value,
+            'psnr': psnr_value
+        })
+        
         print(f"{batch_name}: SSIM = {ssim_value:.4f}, PSNR = {psnr_value:.2f} dB -> Saved to {output_path}")
         
     except FileNotFoundError as e:
@@ -114,4 +124,23 @@ for batch_name in batch_folders:
     except Exception as e:
         print(f"Error processing {batch_name}: {e}")
 
+# Save metrics to file
+metrics_path = os.path.join(comparison_output_folder, 'metrics.txt')
+with open(metrics_path, 'w') as f:
+    f.write("Batch\tSSIM\tPSNR (dB)\n")
+    f.write("-" * 40 + "\n")
+    for m in metrics_list:
+        f.write(f"{m['batch']}\t{m['ssim']:.4f}\t{m['psnr']:.2f}\n")
+    
+    # Calculate and write summary statistics
+    if metrics_list:
+        ssim_values = [m['ssim'] for m in metrics_list]
+        psnr_values = [m['psnr'] for m in metrics_list]
+        f.write("-" * 40 + "\n")
+        f.write(f"Mean SSIM:\t{np.mean(ssim_values):.4f}\n")
+        f.write(f"Std SSIM:\t{np.std(ssim_values):.4f}\n")
+        f.write(f"Mean PSNR:\t{np.mean(psnr_values):.2f} dB\n")
+        f.write(f"Std PSNR:\t{np.std(psnr_values):.2f} dB\n")
+
+print(f"\nMetrics saved to {metrics_path}")
 print(f"\nDone! Comparison images saved to {comparison_output_folder}")

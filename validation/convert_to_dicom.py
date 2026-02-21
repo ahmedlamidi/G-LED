@@ -370,7 +370,7 @@ if __name__ == '__main__':
     
     # Load ground truth sinograms from Dataset to get actual min/max values and CT dimensions
     print("Loading ground truth sinograms from Dataset...")
-    gt_sinograms, sino_ranges, spacing, ct_dims = get_ground_truth_sinograms("data/Dataset", num_slices=20)
+    gt_sinograms, sino_ranges, spacing, ct_dims = get_ground_truth_sinograms("data/test_data", num_slices=20)
     print(f"Loaded {len(gt_sinograms)} ground truth sinograms")
     
     # Get all batch folders and sort them
