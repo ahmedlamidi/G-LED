@@ -79,14 +79,14 @@ def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler
                 # batch shape: [B, T, C, H, W] = [B, T, 1, 720, 820]
 		H, W = batch.shape[-2], batch.shape[-1]
 		# Assuming [B, T, C, H, W]
-		# cond_width = int(W * 0.50)   # 50% condition = 410
-		# target_width = int(W * 0.53) # 53% target = 435
+		cond_width = int(W * 0.50)   # 50% condition = 410
+		target_width = int(W * 0.53) # 53% target = 435
 		
-		# batch_cond = batch[..., :cond_width]           # First 50%
-		# batch = batch[..., (W - target_width):]        # Last 53%
+		batch_cond = batch[..., :cond_width]           # First 50%
+		batch = batch[..., (W - target_width):]        # Last 53%
 		
-		batch_cond = batch[..., :W//2]  # Left half
-		batch = batch[..., W//2:]      # Right half
+		# batch_cond = batch[..., :W//2]  # Left half
+		# batch = batch[..., W//2:]      # Right half
 		# Pad width to divisible by 16
 		def pad_width_to_16(tensor):
 			# tensor shape: [B, T, C, H, W]
