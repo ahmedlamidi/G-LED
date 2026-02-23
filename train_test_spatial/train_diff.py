@@ -88,20 +88,20 @@ def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler
 		batch_cond = batch[..., :W//2]  # Left half
 		batch = batch[..., W//2:]      # Right half
 		# Pad width to divisible by 16
-		def pad_width_to_16(tensor):
-			# tensor shape: [B, T, C, H, W]
-			w = tensor.shape[-1]
-			pad_w = (16 - w % 16) % 16
-			if pad_w > 0:
-				# Reshape to 4D for padding (F.pad reflect doesn't support 5D)
-				B, T, C, H, W_orig = tensor.shape
-				tensor = tensor.reshape(B * T, C, H, W_orig)
-				tensor = F.pad(tensor, (0, pad_w), mode='reflect')
-				tensor = tensor.reshape(B, T, C, H, W_orig + pad_w)
-			return tensor
+		# def pad_width_to_16(tensor):
+		# 	# tensor shape: [B, T, C, H, W]
+		# 	w = tensor.shape[-1]
+		# 	pad_w = (16 - w % 16) % 16
+		# 	if pad_w > 0:
+		# 		# Reshape to 4D for padding (F.pad reflect doesn't support 5D)
+		# 		B, T, C, H, W_orig = tensor.shape
+		# 		tensor = tensor.reshape(B * T, C, H, W_orig)
+		# 		tensor = F.pad(tensor, (0, pad_w), mode='reflect')
+		# 		tensor = tensor.reshape(B, T, C, H, W_orig + pad_w)
+		# 	return tensor
 		
-		batch_cond = pad_width_to_16(batch_cond)
-		batch = pad_width_to_16(batch)            
+		# batch_cond = pad_width_to_16(batch_cond)
+		# batch = pad_width_to_16(batch)            
 
 		#need # B x F x T x H x W
 		batch= batch.permute([0,2,1,3,4])
