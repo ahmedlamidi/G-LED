@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 import pickle
 import os
+import torch.nn.functional as F
 
 sys.path.insert(0, './util')
 from utils import save_loss
@@ -72,9 +73,27 @@ def test_final(args_final,
                         num_velocity = batch.shape[2] if batch.ndim == 5 else 1  # Get actual channels from data
                         print(f"num_time: {num_time}, num_velocity: {num_velocity}")
                         H, W = batch.shape[-2], batch.shape[-1]
-                        batch_cond = batch[..., :W//2]  # Left half
-                       # batch = batch[..., H//2:, :]
- # [B, C,T,H,W]
+                        cond_width = int(W * 0.50)   # 50% condition = 408
+                        target_width = int(W * 0.53) # 53% target = 432
+                        
+                        batch_cond = batch[..., :cond_width]           # First 50%
+                        batch = batch[..., (W - target_width):]        # Last 53%
+                        
+                        # Pad/crop width to model's expected image_width (448)
+                        def pad_to_model_width(tensor, target_w=448):
+                                # tensor shape: [B, T, C, H, W]
+                                B, T, C, H, W_orig = tensor.shape
+                                tensor = tensor.reshape(B * T, C, H, W_orig)
+                                pad_w = target_w - W_orig
+                                if pad_w > 0:
+                                        tensor = F.pad(tensor, (0, pad_w, 0, 0), mode='reflect')
+                                elif pad_w < 0:
+                                        tensor = tensor[..., :target_w]
+                                tensor = tensor.reshape(B, T, C, H, target_w)
+                                return tensor
+                        
+                        batch_cond = pad_to_model_width(batch_cond, target_w=448)
+                        batch = pad_to_model_width(batch, target_w=448)
                         batch_cond = batch_cond.permute(0, 2, 1, 3, 4)  # [B, C, T, H, W]
                         recon_micro = []
                         vf = 1 #args_diff.nt
