@@ -362,10 +362,10 @@ def process_batch(batch_folder, output_dir, sino_min, sino_max, spacing=(1.0, 1.
 
 if __name__ == '__main__':
     # Base folder containing all batch folders (generated outputs)
-    base_folder = 'output/feb_12_512_model/diffusion_folder/experiment_final/contour'
+    base_folder = 'output/feb_19_720_820_model/diffusion_folder/experiment_final/contour'
     
     # Output folder for all DICOM files (in experiment_final)
-    dicom_output_folder = Path('output/feb_12_512_model/diffusion_folder/experiment_final/dicom_output')
+    dicom_output_folder = Path('output/feb_19_720_820_model/diffusion_folder/experiment_final/dicom_output')
     dicom_output_folder.mkdir(parents=True, exist_ok=True)
     
     # Load ground truth sinograms from Dataset to get actual min/max values and CT dimensions

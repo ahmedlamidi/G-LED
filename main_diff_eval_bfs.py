@@ -28,7 +28,7 @@ class Args_final_eval:
 		for finding the dynamics dir
 		"""
 		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/feb_12_512_model',
+								 default='output/feb_19_720_820_model',
 								 help='all the information of bfs training')
 		
 		"""
@@ -107,7 +107,7 @@ if __name__ == '__main__':
 	"""
 	Fetch dataset
 	"""
-	data_set = dicom_dataset(Interpolate=True, data_path="data/test_data", detector_count=512, angle_step=(360/512))
+	data_set = dicom_dataset(Interpolate=True, data_path="data/test_data", detector_count=816, angle_step=(360/720))
 	
 	data_loader = DataLoader(dataset=data_set, 
 							 shuffle=False,
@@ -129,8 +129,8 @@ if __name__ == '__main__':
 				   cond_images_channels=1, 
 				   memory_efficient=True, 
 				   dim_mults=(1, 2,4,8)).to(torch.device(args_diff.device))  #mid: mid channel
-	image_sizes = (512)
-	image_width = (256) 
+	image_sizes = (720)
+	image_width = (416) 
 	imagen = ElucidatedImagen(
             unets = (unet1),
             image_sizes = image_sizes,

@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 import pickle
 import os
+import torch.nn.functional as F
 
 sys.path.insert(0, './util')
 from utils import save_loss
@@ -76,6 +77,21 @@ def test_final(args_final,
                        # batch = batch[..., H//2:, :]
  # [B, C,T,H,W]
                         batch_cond = batch_cond.permute(0, 2, 1, 3, 4)  # [B, C, T, H, W]
+                        def pad_width_to_16(tensor):
+                                # tensor shape: [B, T, C, H, W]
+                                w = tensor.shape[-1]
+                                pad_w = (16 - w % 16) % 16
+                                if pad_w > 0:
+                                        # Reshape to 4D for padding (F.pad reflect doesn't support 5D)
+                                        B, T, C, H, W_orig = tensor.shape
+                                        tensor = tensor.reshape(B * T, C, H, W_orig)
+                                        # For 4D tensor, need 4-element tuple: (left, right, top, bottom)
+                                        tensor = F.pad(tensor, (0, pad_w, 0, 0), mode='reflect')
+                                        tensor = tensor.reshape(B, T, C, H, W_orig + pad_w)
+                                return tensor
+                                
+                        batch_cond = pad_width_to_16(batch_cond)
+                        batch = pad_width_to_16(batch)   
                         recon_micro = []
                         vf = 1 #args_diff.nt
                         Nvf = args_final.test_Nt // vf

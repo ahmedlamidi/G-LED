@@ -229,7 +229,7 @@ if __name__ == '__main__':
 	os.makedirs(ground_truth_dir, exist_ok=True)
 	
 	# Use dicom_dataset to load data
-	dset = dicom_dataset(Interpolate=True, detector_count= 512, angle_step=(360/512), data_path="data/test_data")
+	dset = dicom_dataset(Interpolate=True, detector_count= 816, angle_step=(360/720), data_path="data/test_data")
 	
 	print(f"Total samples in dataset: {len(dset)}")
 	

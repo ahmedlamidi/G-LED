@@ -5,13 +5,13 @@ from skimage.metrics import peak_signal_noise_ratio as psnr
 import os
 
 # Base folder containing all batch folders (generated outputs)
-base_folder = 'output/feb_12_512_model/diffusion_folder/experiment_final/contour'
+base_folder = 'output/feb_19_720_820_model/diffusion_folder/experiment_final/contour'
 
 # Ground truth folder
-ground_truth_folder = 'output/feb_12_512_model/ground_truth'
+ground_truth_folder = 'output/feb_19_720_820_model/ground_truth'
 
 # Output folder for comparison images
-comparison_output_folder = 'output/feb_12_512_model/diffusion_folder/comparisons'
+comparison_output_folder = 'output/feb_19_720_820_model/diffusion_folder/comparisons'
 os.makedirs(comparison_output_folder, exist_ok=True)
 
 # Get all batch folders and sort them
