@@ -28,7 +28,7 @@ def create_sinogram_from_dicom(ct_slice, dx, dy):
     
     DSO = 1000
     ODD = 600  
-    angles_deg = np.arange(0, 360, 360/512, dtype=np.float32)
+    angles_deg = np.arange(0, 360, 360/1024, dtype=np.float32)
     angles = np.deg2rad(angles_deg)
     
     vol_geom = astra.create_vol_geom(H, W,
@@ -37,7 +37,7 @@ def create_sinogram_from_dicom(ct_slice, dx, dy):
     )
     
     # Detector should cover the full object diagonal (matching saved_ground_truth.py)
-    det_count = 512
+    det_count = 1024
     det_spacing = dx  
     
     proj_geom = astra.create_proj_geom('fanflat', det_spacing, det_count, angles, DSO, ODD)
@@ -362,10 +362,10 @@ def process_batch(batch_folder, output_dir, sino_min, sino_max, spacing=(1.0, 1.
 
 if __name__ == '__main__':
     # Base folder containing all batch folders (generated outputs)
-    base_folder = 'output/feb_12_512_model/diffusion_folder/experiment_final/contour'
+    base_folder = 'output/feb_16_1024_512_model/diffusion_folder/experiment_final/contour'
     
     # Output folder for all DICOM files (in experiment_final)
-    dicom_output_folder = Path('output/feb_12_512_model/diffusion_folder/experiment_final/dicom_output')
+    dicom_output_folder = Path('output/feb_16_1024_512_model/diffusion_folder/experiment_final/dicom_output')
     dicom_output_folder.mkdir(parents=True, exist_ok=True)
     
     # Load ground truth sinograms from Dataset to get actual min/max values and CT dimensions
