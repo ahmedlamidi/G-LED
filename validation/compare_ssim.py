@@ -5,13 +5,13 @@ from skimage.metrics import peak_signal_noise_ratio as psnr
 import os
 
 # Base folder containing all batch folders (generated outputs)
-base_folder = 'output/feb_12_512_model/diffusion_folder/experiment_final/contour'
+base_folder = 'output/feb_19_feather_model_720_820/diffusion_folder/experiment_final_checkpoint_100/contour'
 
 # Ground truth folder
-ground_truth_folder = 'output/feb_12_512_model/ground_truth'
+ground_truth_folder = 'output/feb_19_feather_model_720_820/ground_truth'
 
 # Output folder for comparison images
-comparison_output_folder = 'output/feb_12_512_model/diffusion_folder/comparisons'
+comparison_output_folder = 'output/feb_19_feather_model_720_820/diffusion_folder/experiment_final_checkpoint_100/comparison'
 os.makedirs(comparison_output_folder, exist_ok=True)
 
 # Get all batch folders and sort them
@@ -60,10 +60,17 @@ for batch_name in batch_folders:
         elif img_ground_truth.ndim == 3:
             img_ground_truth = img_ground_truth[0]
         
+        # Get original width from ground truth (53% of full width, since we compare right sections)
+        original_half_width = int(img_ground_truth.shape[1] * 0.53)
+        
+        # Remove padding from generated image (padding was added to make width multiple of 16)
+        img_generated = img_generated[:, :original_half_width]
+        img_cond = img_cond[:, :original_half_width]
+        
         # Split ground truth in half - left side is condition, right side is what we compare
         width = img_ground_truth.shape[1]
-        gt_left = img_ground_truth[:, :width//2]  # Condition part
-        gt_right = img_ground_truth[:, width//2:]  # Part to compare with generated
+        gt_left = img_ground_truth[:, :int(width*0.5)]  # Condition part
+        gt_right = img_ground_truth[:, int(width*0.5):]  # Part to compare with generated
         
         # Normalize both images to [0, 1] for SSIM calculation
         def normalize(img):
@@ -77,14 +84,55 @@ for batch_name in batch_folders:
         gt_left_norm = normalize(gt_left)
         img_cond_norm = normalize(img_cond)
         
-        # Calculate SSIM between generated and right side of ground truth
-        ssim_value = ssim(gt_right_norm, img_gen_norm, data_range=1.0)
+        # Extract portions with matching sizes for comparison
+        width = img_ground_truth.shape[1]
+        cond_width = int(width * 0.5)  # First 50% for condition
+        target_width = int(width * 0.53)  # Last 53% for target
         
-        # Calculate PSNR between generated and right side of ground truth
-        psnr_value = psnr(gt_right_norm, img_gen_norm, data_range=1.0)
+        # Extract from ground truth matching the generated image sizes
+        gt_cond_compare = gt_left_norm[:, :cond_width]  # First 50%
+        gt_target_compare = gt_right_norm[:, (gt_right_norm.shape[1] - target_width):]  # Last 53%
         
-        # Concatenate left side (condition) with generated and with ground truth right
-        combined_generated = np.concatenate([img_cond_norm, img_gen_norm], axis=1)
+        # Check for size differences and print them
+        if img_gen_norm.shape != gt_target_compare.shape:
+            print(f"{batch_name} - Size mismatch at comparison:")
+            print(f"  Generated shape: {img_gen_norm.shape}")
+            print(f"  GT target shape: {gt_target_compare.shape}")
+        
+        if img_cond_norm.shape != gt_cond_compare.shape:
+            print(f"{batch_name} - Size mismatch at condition:")
+            print(f"  Condition shape: {img_cond_norm.shape}")
+            print(f"  GT condition shape: {gt_cond_compare.shape}")
+        
+        # Calculate SSIM between generated and ground truth (same sizes now)
+        ssim_value = ssim(gt_target_compare, img_gen_norm, data_range=1.0)
+        
+        # Calculate PSNR between generated and ground truth (same sizes now)
+        psnr_value = psnr(gt_target_compare, img_gen_norm, data_range=1.0)
+        
+        # Create alpha masks for smooth blending on generated images
+        overlap_width = int(img_cond_norm.shape[1] * 0.06)
+        
+        # Create alpha mask for condition (left image): 1.0 to 0.0 transition
+        alpha_cond = np.ones((img_cond_norm.shape[0], img_cond_norm.shape[1]))
+        if overlap_width > 0:
+            x = np.linspace(1, 0, overlap_width)
+            alpha_cond[:, -overlap_width:] = 1.0 / (1.0 + np.exp(-10 * (x - 0.5)))
+        
+        # Create alpha mask for generated (right image): 0.0 to 1.0 transition
+        alpha_gen = np.ones((img_gen_norm.shape[0], img_gen_norm.shape[1]))
+        if overlap_width > 0:
+            x = np.linspace(0, 1, overlap_width)
+            alpha_gen[:, :overlap_width] = 1.0 / (1.0 + np.exp(-10 * (x - 0.5)))
+        
+        # Apply alpha masks and blend for generated images
+        blended_cond = img_cond_norm * alpha_cond[:, :img_cond_norm.shape[1]]
+        blended_gen = img_gen_norm * alpha_gen[:, :img_gen_norm.shape[1]]
+        
+        # Concatenate with blending for generated
+        combined_generated = np.concatenate([blended_cond, blended_gen], axis=1)
+        
+        # Ground truth at 50/50 split with no blending
         combined_gt = np.concatenate([gt_left_norm, gt_right_norm], axis=1)
         
         # Create side-by-side comparison figure

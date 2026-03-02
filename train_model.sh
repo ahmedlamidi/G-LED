@@ -27,9 +27,9 @@ nvidia-smi
 # srun python compare_ssim.py
 #to start from saved model
 
-srun python main_diff_bfs.py --resume
+# srun python main_diff_bfs.py --resume
 # srun python data/dicom_preprocess.py
 # srun python main_diff_eval_bfs.py
 # srun python saved_ground_truth.py
-# srun python validation/compare_ssim.py
+srun python validation/compare_ssim.py
 # srun python validation/convert_to_dicom.py
