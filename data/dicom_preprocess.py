@@ -225,7 +225,7 @@ class Efficient_LIDC_DicomDataset(Dataset):
 
 if __name__ == '__main__':
 	# Create ground truth folder if it doesn't exist
-	ground_truth_dir = "output/feb_12_512_model/ground_truth"
+	ground_truth_dir = "output/feb_19_720_820_model/ground_truth"
 	os.makedirs(ground_truth_dir, exist_ok=True)
 	
 	# Use dicom_dataset to load data

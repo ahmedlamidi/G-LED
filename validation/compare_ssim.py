@@ -48,7 +48,7 @@ for batch_name in batch_folders:
         elif img_cond.ndim == 3:
             img_cond = img_cond[0]
         
-        # Load the ground truth
+        # Load the ground truth first to get the original width (before padding)
         gt_path = os.path.join(ground_truth_folder, f'batch{batch_num}.npy')
         img_ground_truth = np.load(gt_path)
         
@@ -59,6 +59,13 @@ for batch_name in batch_folders:
             img_ground_truth = img_ground_truth[0, 0]
         elif img_ground_truth.ndim == 3:
             img_ground_truth = img_ground_truth[0]
+        
+        # Get original width from ground truth (half of full width, since we compare right halves)
+        original_half_width = img_ground_truth.shape[1] // 2
+        
+        # Remove padding from generated image (padding was added to make width multiple of 16)
+        img_generated = img_generated[:, :original_half_width]
+        img_cond = img_cond[:, :original_half_width]
         
         # Split ground truth in half - left side is condition, right side is what we compare
         width = img_ground_truth.shape[1]
