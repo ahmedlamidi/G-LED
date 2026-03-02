@@ -6,3 +6,4 @@
 /output
 /data/ground_truth
 /data/test_data
+/data/__pycache__
