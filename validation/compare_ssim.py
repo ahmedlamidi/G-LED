@@ -5,13 +5,13 @@ from skimage.metrics import peak_signal_noise_ratio as psnr
 import os
 
 # Base folder containing all batch folders (generated outputs)
-base_folder = 'output/feb_19_feather_model_720_820/diffusion_folder/experiment_final_checkpoint_100/contour'
+base_folder = 'output/feb_19_feather_model_720_820/diffusion_folder/experiment_final_checkpoint_200/contour'
 
 # Ground truth folder
 ground_truth_folder = 'output/feb_19_feather_model_720_820/ground_truth'
 
 # Output folder for comparison images
-comparison_output_folder = 'output/feb_19_feather_model_720_820/diffusion_folder/experiment_final_checkpoint_100/comparison'
+comparison_output_folder = 'output/feb_19_feather_model_720_820/diffusion_folder/experiment_final_checkpoint_200/comparison'
 os.makedirs(comparison_output_folder, exist_ok=True)
 
 # Get all batch folders and sort them
@@ -30,10 +30,8 @@ for batch_name in batch_folders:
     try:
         # Load the generated reconstruction
         img_generated = np.load(os.path.join(output_folder, 'recon_micro_0.npy'))
-        # Load the condition (left half)
-        img_cond = np.load(os.path.join(output_folder, 'recon_micro_0gt.npy'))
         
-        # Take the last 2 dimensions (512, 512) from shape (1, 1, 1, 512, 512)
+        # Squeeze to 2D
         if img_generated.ndim == 5:
             img_generated = img_generated[0, 0, 0]
         elif img_generated.ndim == 4:
@@ -41,18 +39,11 @@ for batch_name in batch_folders:
         elif img_generated.ndim == 3:
             img_generated = img_generated[0]
         
-        if img_cond.ndim == 5:
-            img_cond = img_cond[0, 0, 0]
-        elif img_cond.ndim == 4:
-            img_cond = img_cond[0, 0]
-        elif img_cond.ndim == 3:
-            img_cond = img_cond[0]
-        
         # Load the ground truth
         gt_path = os.path.join(ground_truth_folder, f'batch{batch_num}.npy')
         img_ground_truth = np.load(gt_path)
         
-        # Handle different shapes for ground truth
+        # Squeeze to 2D
         if img_ground_truth.ndim == 5:
             img_ground_truth = img_ground_truth[0, 0, 0]
         elif img_ground_truth.ndim == 4:
@@ -60,19 +51,26 @@ for batch_name in batch_folders:
         elif img_ground_truth.ndim == 3:
             img_ground_truth = img_ground_truth[0]
         
-        # Get original width from ground truth (53% of full width, since we compare right sections)
-        original_half_width = int(img_ground_truth.shape[1] * 0.53)
+        # The model padded the target to width 448 using reflect padding.
+        # Original target_width = int(original_W * 0.53).
+        # Derive original_W from the ground truth full width, then compute target_width.
+        gt_W = img_ground_truth.shape[1]
+        original_W = gt_W  # ground truth is the original full-width image
+        cond_width = int(original_W * 0.50)   # First 50%
+        target_width = int(original_W * 0.53)  # e.g. int(816 * 0.53) = 432
         
-        # Remove padding from generated image (padding was added to make width multiple of 16)
-        img_generated = img_generated[:, :original_half_width]
-        img_cond = img_cond[:, :original_half_width]
+        # Remove reflect padding from generated: crop right side back to target_width
+        img_generated = img_generated[:, :target_width]
         
-        # Split ground truth in half - left side is condition, right side is what we compare
-        width = img_ground_truth.shape[1]
-        gt_left = img_ground_truth[:, :int(width*0.5)]  # Condition part
-        gt_right = img_ground_truth[:, int(width*0.5):]  # Part to compare with generated
+        # Slice ground truth: last 53% of the full width (mirrors training: batch[..., (W - target_width):])
+        gt_right = img_ground_truth[:, (gt_W - target_width):]            # last 53% = columns 384..815
         
-        # Normalize both images to [0, 1] for SSIM calculation
+        # Condition: first 50% of ground truth (mirrors training: batch[..., :cond_width])
+        gt_cond = img_ground_truth[:, :cond_width]
+        
+        print(f"{batch_name}: generated shape={img_generated.shape}, gt_right shape={gt_right.shape}, gt_cond shape={gt_cond.shape}")
+        
+        # Normalize to [0, 1]
         def normalize(img):
             img_min, img_max = img.min(), img.max()
             if img_max > img_min:
@@ -81,90 +79,60 @@ for batch_name in batch_folders:
         
         img_gen_norm = normalize(img_generated)
         gt_right_norm = normalize(gt_right)
-        gt_left_norm = normalize(gt_left)
-        img_cond_norm = normalize(img_cond)
+        gt_cond_norm = normalize(gt_cond)
         
-        # Extract portions with matching sizes for comparison
-        width = img_ground_truth.shape[1]
-        cond_width = int(width * 0.5)  # First 50% for condition
-        target_width = int(width * 0.53)  # Last 53% for target
+        # Calculate SSIM and PSNR (unchanged)
+        ssim_value = ssim(gt_right_norm, img_gen_norm, data_range=1.0)
+        psnr_value = psnr(gt_right_norm, img_gen_norm, data_range=1.0)
         
-        # Extract from ground truth matching the generated image sizes
-        gt_cond_compare = gt_left_norm[:, :cond_width]  # First 50%
-        gt_target_compare = gt_right_norm[:, (gt_right_norm.shape[1] - target_width):]  # Last 53%
+        # --- Proper feathering in the overlap region ---
+        # cond covers columns 0..cond_width-1 (408px)
+        # generated covers columns (gt_W - target_width)..gt_W-1 (384..815 = 432px)
+        # overlap = cond_width - (gt_W - target_width) = 408 - 384 = 24px
+        overlap_start = gt_W - target_width   # column 384 in original space
+        overlap_end   = cond_width            # column 408 in original space
+        overlap_px    = overlap_end - overlap_start  # 24px
         
-        # Check for size differences and print them
-        if img_gen_norm.shape != gt_target_compare.shape:
-            print(f"{batch_name} - Size mismatch at comparison:")
-            print(f"  Generated shape: {img_gen_norm.shape}")
-            print(f"  GT target shape: {gt_target_compare.shape}")
+        # Build output canvas the full original width
+        combined_generated = np.zeros((img_gen_norm.shape[0], gt_W), dtype=np.float32)
         
-        if img_cond_norm.shape != gt_cond_compare.shape:
-            print(f"{batch_name} - Size mismatch at condition:")
-            print(f"  Condition shape: {img_cond_norm.shape}")
-            print(f"  GT condition shape: {gt_cond_compare.shape}")
+        # Left non-overlap region from condition
+        combined_generated[:, :overlap_start] = gt_cond_norm[:, :overlap_start]
         
-        # Calculate SSIM between generated and ground truth (same sizes now)
-        ssim_value = ssim(gt_target_compare, img_gen_norm, data_range=1.0)
+        # Overlap region: sigmoid blend between cond and gen
+        if overlap_px > 0:
+            x = np.linspace(0, 1, overlap_px)
+            alpha = 1.0 / (1.0 + np.exp(-10 * (x - 0.5)))  # 0→1 sigmoid
+            alpha = alpha[np.newaxis, :]  # broadcast over rows
+            cond_overlap = gt_cond_norm[:, overlap_start:overlap_end]
+            gen_overlap  = img_gen_norm[:, :overlap_px]
+            combined_generated[:, overlap_start:overlap_end] = (1 - alpha) * cond_overlap + alpha * gen_overlap
         
-        # Calculate PSNR between generated and ground truth (same sizes now)
-        psnr_value = psnr(gt_target_compare, img_gen_norm, data_range=1.0)
+        # Right non-overlap region from generated
+        combined_generated[:, overlap_end:] = img_gen_norm[:, overlap_px:]
         
-        # Create alpha masks for smooth blending on generated images
-        overlap_width = int(img_cond_norm.shape[1] * 0.06)
+        # Ground truth: full image normalized, no blending
+        gt_full_norm = normalize(img_ground_truth)
         
-        # Create alpha mask for condition (left image): 1.0 to 0.0 transition
-        alpha_cond = np.ones((img_cond_norm.shape[0], img_cond_norm.shape[1]))
-        if overlap_width > 0:
-            x = np.linspace(1, 0, overlap_width)
-            alpha_cond[:, -overlap_width:] = 1.0 / (1.0 + np.exp(-10 * (x - 0.5)))
-        
-        # Create alpha mask for generated (right image): 0.0 to 1.0 transition
-        alpha_gen = np.ones((img_gen_norm.shape[0], img_gen_norm.shape[1]))
-        if overlap_width > 0:
-            x = np.linspace(0, 1, overlap_width)
-            alpha_gen[:, :overlap_width] = 1.0 / (1.0 + np.exp(-10 * (x - 0.5)))
-        
-        # Apply alpha masks and blend for generated images
-        blended_cond = img_cond_norm * alpha_cond[:, :img_cond_norm.shape[1]]
-        blended_gen = img_gen_norm * alpha_gen[:, :img_gen_norm.shape[1]]
-        
-        # Concatenate with blending for generated
-        combined_generated = np.concatenate([blended_cond, blended_gen], axis=1)
-        
-        # Ground truth at 50/50 split with no blending
-        combined_gt = np.concatenate([gt_left_norm, gt_right_norm], axis=1)
-        
-        # Create side-by-side comparison figure
+        # Plot feathered generated vs full ground truth
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
         
-        # Ground truth (left + right) on the left
-        axes[0].imshow(combined_gt, cmap='gray')
-        axes[0].set_title('Ground Truth')
+        axes[0].imshow(gt_full_norm, cmap='gray')
+        axes[0].set_title('Ground Truth (full)')
         axes[0].axis('off')
         
-        # Condition + Generated on the right
         axes[1].imshow(combined_generated, cmap='gray')
-        axes[1].set_title('Condition + Generated')
+        axes[1].set_title('Condition + Generated (feathered)')
         axes[1].axis('off')
         
-        # Set SSIM and PSNR as the main title
         fig.suptitle(f'SSIM: {ssim_value:.4f} | PSNR: {psnr_value:.2f} dB', fontsize=16, fontweight='bold')
-        
         plt.tight_layout()
         
-        # Save the comparison image
         output_path = os.path.join(comparison_output_folder, f'{batch_name}_comparison.png')
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
         plt.close()
         
-        # Store metrics
-        metrics_list.append({
-            'batch': batch_name,
-            'ssim': ssim_value,
-            'psnr': psnr_value
-        })
-        
+        metrics_list.append({'batch': batch_name, 'ssim': ssim_value, 'psnr': psnr_value})
         print(f"{batch_name}: SSIM = {ssim_value:.4f}, PSNR = {psnr_value:.2f} dB -> Saved to {output_path}")
         
     except FileNotFoundError as e:
