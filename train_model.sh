@@ -1,6 +1,6 @@
 #!/bin/bash -l
 #SBATCH --job-name=ddpm-chest
-#SBATCH -p Quick
+#SBATCH -p general
 #SBATCH --cpus-per-task=2
 #SBATCH --time=168:00:00
 #SBATCH --gres=gpu:1
