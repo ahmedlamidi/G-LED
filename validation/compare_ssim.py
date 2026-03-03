@@ -5,13 +5,13 @@ from skimage.metrics import peak_signal_noise_ratio as psnr
 import os
 
 # Base folder containing all batch folders (generated outputs)
-base_folder = 'output/feb_19_720_820_model/diffusion_folder/experiment_final/contour'
+base_folder = 'output/feb_19_720_820_model/diffusion_folder/experiment_final_checkpoint_300/contour'
 
 # Ground truth folder
 ground_truth_folder = 'output/feb_19_720_820_model/ground_truth'
 
 # Output folder for comparison images
-comparison_output_folder = 'output/feb_19_720_820_model/diffusion_folder/comparisons'
+comparison_output_folder = 'output/feb_19_720_820_model/diffusion_folder/experiment_final_checkpoint_300/comparisons'
 os.makedirs(comparison_output_folder, exist_ok=True)
 
 # Get all batch folders and sort them
@@ -33,7 +33,7 @@ for batch_name in batch_folders:
         # Load the condition (left half)
         img_cond = np.load(os.path.join(output_folder, 'recon_micro_0gt.npy'))
         
-        # Take the last 2 dimensions (512, 512) from shape (1, 1, 1, 512, 512)
+        # Squeeze to 2D
         if img_generated.ndim == 5:
             img_generated = img_generated[0, 0, 0]
         elif img_generated.ndim == 4:
@@ -60,17 +60,11 @@ for batch_name in batch_folders:
         elif img_ground_truth.ndim == 3:
             img_ground_truth = img_ground_truth[0]
         
-        # Get original width from ground truth (half of full width, since we compare right halves)
-        original_half_width = img_ground_truth.shape[1] // 2
+        # Slice GT to match the actual output shapes (no padding removal)
+        gt_cond  = img_ground_truth[:, :img_cond.shape[1]]
+        gt_right = img_ground_truth[:, -img_generated.shape[1]:]
         
-        # Remove padding from generated image (padding was added to make width multiple of 16)
-        img_generated = img_generated[:, :original_half_width]
-        img_cond = img_cond[:, :original_half_width]
-        
-        # Split ground truth in half - left side is condition, right side is what we compare
-        width = img_ground_truth.shape[1]
-        gt_left = img_ground_truth[:, :width//2]  # Condition part
-        gt_right = img_ground_truth[:, width//2:]  # Part to compare with generated
+        print(f"{batch_name}: generated={img_generated.shape}, cond={img_cond.shape}, gt_right={gt_right.shape}")
         
         # Normalize both images to [0, 1] for SSIM calculation
         def normalize(img):
@@ -79,9 +73,9 @@ for batch_name in batch_folders:
                 return (img - img_min) / (img_max - img_min)
             return img
         
-        img_gen_norm = normalize(img_generated)
+        img_gen_norm  = normalize(img_generated)
         gt_right_norm = normalize(gt_right)
-        gt_left_norm = normalize(gt_left)
+        gt_cond_norm  = normalize(gt_cond)
         img_cond_norm = normalize(img_cond)
         
         # Calculate SSIM between generated and right side of ground truth
@@ -90,9 +84,9 @@ for batch_name in batch_folders:
         # Calculate PSNR between generated and right side of ground truth
         psnr_value = psnr(gt_right_norm, img_gen_norm, data_range=1.0)
         
-        # Concatenate left side (condition) with generated and with ground truth right
+        # Concatenate: condition + generated | GT condition + GT right
         combined_generated = np.concatenate([img_cond_norm, img_gen_norm], axis=1)
-        combined_gt = np.concatenate([gt_left_norm, gt_right_norm], axis=1)
+        combined_gt        = np.concatenate([gt_cond_norm,  gt_right_norm], axis=1)
         
         # Create side-by-side comparison figure
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
