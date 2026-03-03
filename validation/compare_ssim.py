@@ -5,13 +5,13 @@ from skimage.metrics import peak_signal_noise_ratio as psnr
 import os
 
 # Base folder containing all batch folders (generated outputs)
-base_folder = 'output/feb_19_720_820_model/diffusion_folder/experiment_final_checkpoint_300/contour'
+base_folder = 'output/feb_19_720_820_model/diffusion_folder/experiment_final_checkpoint_100/contour'
 
 # Ground truth folder
 ground_truth_folder = 'output/feb_19_720_820_model/ground_truth'
 
 # Output folder for comparison images
-comparison_output_folder = 'output/feb_19_720_820_model/diffusion_folder/experiment_final_checkpoint_300/comparisons'
+comparison_output_folder = 'output/feb_19_720_820_model/diffusion_folder/experiment_final_checkpoint_100/comparisons'
 os.makedirs(comparison_output_folder, exist_ok=True)
 
 # Get all batch folders and sort them
@@ -60,9 +60,16 @@ for batch_name in batch_folders:
         elif img_ground_truth.ndim == 3:
             img_ground_truth = img_ground_truth[0]
         
-        # Slice GT to match the actual output shapes (no padding removal)
-        gt_cond  = img_ground_truth[:, :img_cond.shape[1]]
-        gt_right = img_ground_truth[:, -img_generated.shape[1]:]
+        # Use GT dimensions to crop padding from generated outputs
+        gt_W         = img_ground_truth.shape[1]
+        cond_width   = gt_W // 2
+        target_width = gt_W - cond_width
+
+        img_generated = img_generated[:, :target_width]
+        img_cond      = img_cond[:, :cond_width]
+
+        gt_cond  = img_ground_truth[:, :cond_width]
+        gt_right = img_ground_truth[:, cond_width:]
         
         print(f"{batch_name}: generated={img_generated.shape}, cond={img_cond.shape}, gt_right={gt_right.shape}")
         
