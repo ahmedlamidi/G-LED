@@ -85,8 +85,8 @@ def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler
 		# batch_cond = batch[..., :cond_width]           # First 50%
 		# batch = batch[..., (W - target_width):]        # Last 53%
 		
-		batch_cond = batch[..., :H//2, :]  # Top half
-		batch = batch[..., H//2:, :]      # Bottom half
+		batch_cond = batch[..., 0::2, :]  # Every other level (even rows) - known
+		batch      = batch[..., 1::2, :]  # Interleaved missing levels (odd rows) - to predict
 		# Pad height to divisible by 16
 		def pad_width_to_16(tensor):
 			# tensor shape: [B, T, C, H, W]
