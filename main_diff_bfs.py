@@ -30,7 +30,7 @@ class Args:
 		for finding the dynamics dir
 		"""
 		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/mar_2_720_820_higher_unet',
+								 default='output/mar_2_720_820_high_unet',
 								 help='all the information of ks training')
 		"""
 		for diffusion model
@@ -39,7 +39,7 @@ class Args:
 								 default = 1,
 								 help = 'Time steps we use as a single seq')
 		self.parser.add_argument("--unet_dim", 
-								 default=128,
+								 default=64,
 								 help='The unet dimension')
 		self.parser.add_argument("--num_sample_steps", 
 								 default=20,
