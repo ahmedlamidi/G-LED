@@ -41,7 +41,7 @@ def train_diff(diff_args,
 			#							 'model_epoch_' + str(epoch)))
 		
 		# Save checkpoint every 10 epochs for resumability
-		if epoch > 0 and epoch % 10 == 0:
+		if epoch > 0 and epoch % 100 == 0:
 			model.save(path=os.path.join(diff_args.model_save_path, 
 										'checkpoint_epoch_' + str(epoch)))
 			print(f"Saved checkpoint at epoch {epoch}")
