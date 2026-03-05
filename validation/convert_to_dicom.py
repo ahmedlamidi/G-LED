@@ -28,7 +28,7 @@ def create_sinogram_from_dicom(ct_slice, dx, dy):
     
     DSO = 1000
     ODD = 600  
-    angles_deg = np.arange(0, 360, 360/512, dtype=np.float32)
+    angles_deg = np.arange(0, 360, 360/720, dtype=np.float32)
     angles = np.deg2rad(angles_deg)
     
     vol_geom = astra.create_vol_geom(H, W,
@@ -37,7 +37,7 @@ def create_sinogram_from_dicom(ct_slice, dx, dy):
     )
     
     # Detector should cover the full object diagonal (matching saved_ground_truth.py)
-    det_count = 512
+    det_count = 816
     det_spacing = dx  
     
     proj_geom = astra.create_proj_geom('fanflat', det_spacing, det_count, angles, DSO, ODD)
@@ -313,7 +313,7 @@ def denormalize_sinogram(sino_normalized, sino_min, sino_max):
     return sino
 
 
-def process_batch(batch_folder, output_dir, sino_min, sino_max, spacing=(1.0, 1.0, 1.0), ct_dims=None):
+def process_batch(batch_folder, output_dir, sino_min, sino_max, spacing=(1.0, 1.0, 1.0), ct_dims=None, gt_sino_shape=None):
     """Process a single batch folder and save as DICOM."""
     
     # Load generated reconstruction and condition
@@ -338,8 +338,16 @@ def process_batch(batch_folder, output_dir, sino_min, sino_max, spacing=(1.0, 1.
     elif img_cond.ndim == 3:
         img_cond = img_cond[0]
     
-    # Concatenate condition and generated along axis 1 (detectors)
-    # Condition = first half of detectors, Generated = second half of detectors
+    # Crop width padding using GT sinogram dimensions (matching compare_ssim.py)
+    if gt_sino_shape is not None:
+        gt_H, gt_W   = gt_sino_shape[0], gt_sino_shape[1]
+        cond_width   = gt_W // 2
+        target_width = gt_W - cond_width
+        img_cond      = img_cond[:gt_H, :cond_width]
+        img_generated = img_generated[:gt_H, :target_width]
+        print(f"  Cropped to GT dims: cond={img_cond.shape}, generated={img_generated.shape}")
+    
+    # Concatenate condition (left half) and generated (right half) along detector axis
     combined = np.concatenate([img_cond, img_generated], axis=1)
     
     print(f"  Sinogram shape: {combined.shape}")
@@ -362,10 +370,10 @@ def process_batch(batch_folder, output_dir, sino_min, sino_max, spacing=(1.0, 1.
 
 if __name__ == '__main__':
     # Base folder containing all batch folders (generated outputs)
-    base_folder = 'output/feb_19_720_820_model/diffusion_folder/experiment_final/contour'
+    base_folder = 'output/feb_19_720_820_model/diffusion_folder/experiment_final_checkpoint_300/contour'
     
     # Output folder for all DICOM files (in experiment_final)
-    dicom_output_folder = Path('output/feb_19_720_820_model/diffusion_folder/experiment_final/dicom_output')
+    dicom_output_folder = Path('output/feb_19_720_820_model/diffusion_folder/experiment_final_checkpoint_300/dicom_output')
     dicom_output_folder.mkdir(parents=True, exist_ok=True)
     
     # Load ground truth sinograms from Dataset to get actual min/max values and CT dimensions
@@ -401,7 +409,7 @@ if __name__ == '__main__':
             print(f"Processing {batch_name} (CT dims {ct_dim}, sino range [{sino_min:.6f}, {sino_max:.6f}])...")
             
             # Process the generated batch with correct normalization and CT dimensions
-            recon_hu, combined_sino = process_batch(batch_path, dicom_output_folder, sino_min, sino_max, spacing, ct_dim)
+            recon_hu, combined_sino = process_batch(batch_path, dicom_output_folder, sino_min, sino_max, spacing, ct_dim, gt_sino_shape=gt_sinograms[batch_num].shape)
             
             # Save generated as DICOM
             series_uid = generate_uid()

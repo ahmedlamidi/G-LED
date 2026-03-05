@@ -4,6 +4,6 @@
 *slurm*
 *dcm*
 /output
-/data/ground_truth
+/ground_truth
 /data/test_data
 validation/loss_plotter.py
