@@ -5,13 +5,13 @@ from skimage.metrics import peak_signal_noise_ratio as psnr
 import os
 
 # Base folder containing all batch folders (generated outputs)
-base_folder = 'output/feb_19_720_820_model/diffusion_folder/experiment_final_checkpoint_100/contour'
+base_folder = 'output/mar_3_720_820_horizontal_step/diffusion_folder/experiment_final_checkpoint_100/contour'
 
 # Ground truth folder
-ground_truth_folder = 'output/feb_19_720_820_model/ground_truth'
+ground_truth_folder = 'ground_truth'
 
 # Output folder for comparison images
-comparison_output_folder = 'output/feb_19_720_820_model/diffusion_folder/experiment_final_checkpoint_100/comparisons'
+comparison_output_folder = 'output/mar_3_720_820_horizontal_step/diffusion_folder/experiment_final_checkpoint_100/comparisons'
 os.makedirs(comparison_output_folder, exist_ok=True)
 
 # Get all batch folders and sort them
@@ -48,7 +48,7 @@ for batch_name in batch_folders:
         elif img_cond.ndim == 3:
             img_cond = img_cond[0]
         
-        # Load the ground truth first to get the original width (before padding)
+        # Load the ground truth to get original dimensions
         gt_path = os.path.join(ground_truth_folder, f'batch{batch_num}.npy')
         img_ground_truth = np.load(gt_path)
         
@@ -60,18 +60,15 @@ for batch_name in batch_folders:
         elif img_ground_truth.ndim == 3:
             img_ground_truth = img_ground_truth[0]
         
-        # Use GT dimensions to crop padding from generated outputs
-        gt_W         = img_ground_truth.shape[1]
-        cond_width   = gt_W // 2
-        target_width = gt_W - cond_width
+        # Interleaved row split: even rows = condition (known), odd rows = target (to predict)
+        gt_cond   = img_ground_truth[0::2, :]  # even rows
+        gt_target = img_ground_truth[1::2, :]  # odd rows
 
-        img_generated = img_generated[:, :target_width]
-        img_cond      = img_cond[:, :cond_width]
-
-        gt_cond  = img_ground_truth[:, :cond_width]
-        gt_right = img_ground_truth[:, cond_width:]
+        # Crop height padding from generated outputs to match GT dimensions
+        img_generated = img_generated[:gt_target.shape[0], :]
+        img_cond      = img_cond[:gt_cond.shape[0], :]
         
-        print(f"{batch_name}: generated={img_generated.shape}, cond={img_cond.shape}, gt_right={gt_right.shape}")
+        print(f"{batch_name}: generated={img_generated.shape}, cond={img_cond.shape}, gt_target={gt_target.shape}")
         
         # Normalize both images to [0, 1] for SSIM calculation
         def normalize(img):
@@ -80,34 +77,47 @@ for batch_name in batch_folders:
                 return (img - img_min) / (img_max - img_min)
             return img
         
-        img_gen_norm  = normalize(img_generated)
-        gt_right_norm = normalize(gt_right)
-        gt_cond_norm  = normalize(gt_cond)
-        img_cond_norm = normalize(img_cond)
+        img_gen_norm   = normalize(img_generated)
+        gt_target_norm = normalize(gt_target)
+        gt_cond_norm   = normalize(gt_cond)
+        img_cond_norm  = normalize(img_cond)
         
-        # Calculate SSIM between generated and right side of ground truth
-        ssim_value = ssim(gt_right_norm, img_gen_norm, data_range=1.0)
+        # Calculate SSIM between generated odd rows and GT odd rows
+        ssim_value = ssim(gt_target_norm, img_gen_norm, data_range=1.0)
         
-        # Calculate PSNR between generated and right side of ground truth
-        psnr_value = psnr(gt_right_norm, img_gen_norm, data_range=1.0)
+        # Calculate PSNR between generated odd rows and GT odd rows
+        psnr_value = psnr(gt_target_norm, img_gen_norm, data_range=1.0)
         
-        # Concatenate: condition + generated | GT condition + GT right
-        combined_generated = np.concatenate([img_cond_norm, img_gen_norm], axis=1)
-        combined_gt        = np.concatenate([gt_cond_norm,  gt_right_norm], axis=1)
+        # Reconstruct full images by interleaving even/odd rows
+        full_H, full_W = img_ground_truth.shape
+        recon_full = np.zeros((full_H, full_W))
+        recon_full[0::2, :] = img_cond_norm
+        recon_full[1::2, :] = img_gen_norm
+        gt_full = normalize(img_ground_truth)
         
-        # Create side-by-side comparison figure
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        
-        # Ground truth (left + right) on the left
-        axes[0].imshow(combined_gt, cmap='gray')
-        axes[0].set_title('Ground Truth')
-        axes[0].axis('off')
-        
-        # Condition + Generated on the right
-        axes[1].imshow(combined_generated, cmap='gray')
-        axes[1].set_title('Condition + Generated')
-        axes[1].axis('off')
-        
+        # Create 2x2 figure: top row = full images, bottom row = condition / generated separately
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+
+        # Top-left: Ground truth full image
+        axes[0, 0].imshow(gt_full, cmap='gray')
+        axes[0, 0].set_title('Ground Truth')
+        axes[0, 0].axis('off')
+
+        # Top-right: Reconstructed full image (condition + generated interleaved)
+        axes[0, 1].imshow(recon_full, cmap='gray')
+        axes[0, 1].set_title('Condition + Generated (Interleaved)')
+        axes[0, 1].axis('off')
+
+        # Bottom-left: Condition only (even rows)
+        axes[1, 0].imshow(img_cond_norm, cmap='gray')
+        axes[1, 0].set_title('Condition (Even Rows)')
+        axes[1, 0].axis('off')
+
+        # Bottom-right: Generated only (odd rows)
+        axes[1, 1].imshow(img_gen_norm, cmap='gray')
+        axes[1, 1].set_title('Generated (Odd Rows)')
+        axes[1, 1].axis('off')
+
         # Set SSIM and PSNR as the main title
         fig.suptitle(f'SSIM: {ssim_value:.4f} | PSNR: {psnr_value:.2f} dB', fontsize=16, fontweight='bold')
         

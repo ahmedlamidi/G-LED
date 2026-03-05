@@ -73,25 +73,24 @@ def test_final(args_final,
                         num_velocity = batch.shape[2] if batch.ndim == 5 else 1  # Get actual channels from data
                         print(f"num_time: {num_time}, num_velocity: {num_velocity}")
                         H, W = batch.shape[-2], batch.shape[-1]
-                        batch_cond = batch[..., :W//2]  # Left half
-                       # batch = batch[..., H//2:, :]
- # [B, C,T,H,W]
-                        batch_cond = batch_cond.permute(0, 2, 1, 3, 4)  # [B, C, T, H, W]
+                        batch_cond = batch[..., 0::2, :]  # Every other level (even rows) - known
+                        batch      = batch[..., 1::2, :]  # Interleaved missing levels (odd rows) - to predict
                         def pad_width_to_16(tensor):
                                 # tensor shape: [B, T, C, H, W]
-                                w = tensor.shape[-1]
-                                pad_w = (16 - w % 16) % 16
-                                if pad_w > 0:
+                                h = tensor.shape[-2]
+                                pad_h = (16 - h % 16) % 16
+                                if pad_h > 0:
                                         # Reshape to 4D for padding (F.pad reflect doesn't support 5D)
-                                        B, T, C, H, W_orig = tensor.shape
-                                        tensor = tensor.reshape(B * T, C, H, W_orig)
-                                        # For 4D tensor, need 4-element tuple: (left, right, top, bottom)
-                                        tensor = F.pad(tensor, (0, pad_w, 0, 0), mode='reflect')
-                                        tensor = tensor.reshape(B, T, C, H, W_orig + pad_w)
+                                        B, T, C, H_orig, W_t = tensor.shape
+                                        tensor = tensor.reshape(B * T, C, H_orig, W_t)
+                                        # For 4D tensor: (left, right, top, bottom)
+                                        tensor = F.pad(tensor, (0, 0, 0, pad_h), mode='reflect')
+                                        tensor = tensor.reshape(B, T, C, H_orig + pad_h, W_t)
                                 return tensor
-                                
+
                         batch_cond = pad_width_to_16(batch_cond)
-                        batch = pad_width_to_16(batch)   
+                        batch = pad_width_to_16(batch)
+                        batch_cond = batch_cond.permute(0, 2, 1, 3, 4)  # [B, C, T, H, W]
                         recon_micro = []
                         vf = 1 #args_diff.nt
                         Nvf = args_final.test_Nt // vf
