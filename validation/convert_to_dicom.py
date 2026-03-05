@@ -313,7 +313,7 @@ def denormalize_sinogram(sino_normalized, sino_min, sino_max):
     return sino
 
 
-def process_batch(batch_folder, output_dir, sino_min, sino_max, spacing=(1.0, 1.0, 1.0), ct_dims=None):
+def process_batch(batch_folder, output_dir, sino_min, sino_max, spacing=(1.0, 1.0, 1.0), ct_dims=None, gt_sino_shape=None):
     """Process a single batch folder and save as DICOM."""
     
     # Load generated reconstruction and condition
@@ -338,9 +338,25 @@ def process_batch(batch_folder, output_dir, sino_min, sino_max, spacing=(1.0, 1.
     elif img_cond.ndim == 3:
         img_cond = img_cond[0]
     
-    # Concatenate condition and generated along axis 1 (detectors)
-    # Condition = first half of detectors, Generated = second half of detectors
-    combined = np.concatenate([img_cond, img_generated], axis=1)
+    # Determine original full sinogram dimensions from GT shape
+    if gt_sino_shape is not None:
+        full_H, full_W = gt_sino_shape
+    else:
+        full_H = img_cond.shape[0] * 2  # fallback: double the half-height
+        full_W = img_cond.shape[1]
+    
+    # Expected half-heights (even rows = ceil, odd rows = floor)
+    cond_H   = (full_H + 1) // 2
+    target_H = full_H // 2
+    
+    # Crop height padding from loaded arrays to match original GT dimensions
+    img_cond      = img_cond[:cond_H, :full_W]
+    img_generated = img_generated[:target_H, :full_W]
+    
+    # Reconstruct full sinogram by interleaving even (condition) + odd (generated) rows
+    combined = np.zeros((full_H, full_W), dtype=np.float32)
+    combined[0::2, :] = img_cond       # even rows = condition (known)
+    combined[1::2, :] = img_generated  # odd rows  = generated (predicted)
     
     print(f"  Sinogram shape: {combined.shape}")
     print(f"  Value range: [{combined.min():.4f}, {combined.max():.4f}]")
@@ -401,7 +417,7 @@ if __name__ == '__main__':
             print(f"Processing {batch_name} (CT dims {ct_dim}, sino range [{sino_min:.6f}, {sino_max:.6f}])...")
             
             # Process the generated batch with correct normalization and CT dimensions
-            recon_hu, combined_sino = process_batch(batch_path, dicom_output_folder, sino_min, sino_max, spacing, ct_dim)
+            recon_hu, combined_sino = process_batch(batch_path, dicom_output_folder, sino_min, sino_max, spacing, ct_dim, gt_sino_shape=gt_sinograms[batch_num].shape)
             
             # Save generated as DICOM
             series_uid = generate_uid()
