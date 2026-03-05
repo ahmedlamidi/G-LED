@@ -223,7 +223,7 @@ def projection(img_array, spacing, ct_dims=None):
     ODD = 600  
 
     # Use same angle generation as saved_ground_truth.py (always 512 angles for 360 degrees)
-    angles_deg = np.arange(0, 360, (360/512), dtype=np.float32)
+    angles_deg = np.arange(0, 360, (360/720), dtype=np.float32)
     angles = np.deg2rad(angles_deg)
     
     print(f"  FBP: {num_angles} angles, {num_detectors} detectors")
