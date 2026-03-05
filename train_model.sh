@@ -7,6 +7,7 @@
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=ahmedlamidi@usf.edu
 #SBATCH --mem=64G
+#SBATCH --exclude=GPU6
 # 激活 conda（按 GAIVI 手册风格)
 
 cd "$SLURM_SUBMIT_DIR"
