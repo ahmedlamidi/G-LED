@@ -28,7 +28,7 @@ def create_sinogram_from_dicom(ct_slice, dx, dy):
     
     DSO = 1000
     ODD = 600  
-    angles_deg = np.arange(0, 360, 360/512, dtype=np.float32)
+    angles_deg = np.arange(0, 360, 360/720, dtype=np.float32)
     angles = np.deg2rad(angles_deg)
     
     vol_geom = astra.create_vol_geom(H, W,
@@ -37,7 +37,7 @@ def create_sinogram_from_dicom(ct_slice, dx, dy):
     )
     
     # Detector should cover the full object diagonal (matching saved_ground_truth.py)
-    det_count = 512
+    det_count = 816
     det_spacing = dx  
     
     proj_geom = astra.create_proj_geom('fanflat', det_spacing, det_count, angles, DSO, ODD)
@@ -223,7 +223,7 @@ def projection(img_array, spacing, ct_dims=None):
     ODD = 600  
 
     # Use same angle generation as saved_ground_truth.py (always 512 angles for 360 degrees)
-    angles_deg = np.arange(0, 360, (360/512), dtype=np.float32)
+    angles_deg = np.arange(0, 360, (360/720), dtype=np.float32)
     angles = np.deg2rad(angles_deg)
     
     print(f"  FBP: {num_angles} angles, {num_detectors} detectors")
@@ -338,23 +338,20 @@ def process_batch(batch_folder, output_dir, sino_min, sino_max, spacing=(1.0, 1.
     elif img_cond.ndim == 3:
         img_cond = img_cond[0]
     
-    # Determine original full sinogram dimensions from GT shape
+    # Crop height padding using interleaved row split (matching compare_ssim.py exactly)
     if gt_sino_shape is not None:
-        full_H, full_W = gt_sino_shape
+        gt_H, gt_W  = gt_sino_shape[0], gt_sino_shape[1]
+        gt_cond_H   = (gt_H + 1) // 2  # even rows count
+        gt_target_H = gt_H // 2        # odd rows count
+        img_cond      = img_cond[:gt_cond_H, :gt_W]
+        img_generated = img_generated[:gt_target_H, :gt_W]
+        print(f"  Cropped: cond={img_cond.shape}, generated={img_generated.shape}")
     else:
-        full_H = img_cond.shape[0] * 2  # fallback: double the half-height
-        full_W = img_cond.shape[1]
-    
-    # Expected half-heights (even rows = ceil, odd rows = floor)
-    cond_H   = (full_H + 1) // 2
-    target_H = full_H // 2
-    
-    # Crop height padding from loaded arrays to match original GT dimensions
-    img_cond      = img_cond[:cond_H, :full_W]
-    img_generated = img_generated[:target_H, :full_W]
-    
+        gt_H = img_cond.shape[0] + img_generated.shape[0]
+        gt_W = img_cond.shape[1]
+
     # Reconstruct full sinogram by interleaving even (condition) + odd (generated) rows
-    combined = np.zeros((full_H, full_W), dtype=np.float32)
+    combined = np.zeros((gt_H, gt_W), dtype=np.float32)
     combined[0::2, :] = img_cond       # even rows = condition (known)
     combined[1::2, :] = img_generated  # odd rows  = generated (predicted)
     
@@ -378,10 +375,10 @@ def process_batch(batch_folder, output_dir, sino_min, sino_max, spacing=(1.0, 1.
 
 if __name__ == '__main__':
     # Base folder containing all batch folders (generated outputs)
-    base_folder = 'output/feb_19_720_820_model/diffusion_folder/experiment_final/contour'
+    base_folder = 'output/mar_3_720_820_horizontal_step/diffusion_folder/experiment_final_checkpoint_150/contour'
     
     # Output folder for all DICOM files (in experiment_final)
-    dicom_output_folder = Path('output/feb_19_720_820_model/diffusion_folder/experiment_final/dicom_output')
+    dicom_output_folder = Path('output/mar_3_720_820_horizontal_step/diffusion_folder/experiment_final_checkpoint_150/dicom_output')
     dicom_output_folder.mkdir(parents=True, exist_ok=True)
     
     # Load ground truth sinograms from Dataset to get actual min/max values and CT dimensions
