@@ -30,7 +30,7 @@ class Args:
 		for finding the dynamics dir
 		"""
 		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/mar_8_horizontal_step_2',
+								 default='output/mar_8_horizontal_PIML_step_4',
 								 help='all the information of ks training')
 		"""
 		for diffusion model
@@ -106,7 +106,7 @@ if __name__ == '__main__':
 				   cond_images_channels=1, 
 				   memory_efficient=True, 
 				   dim_mults=(1, 2, 4, 8)).to(torch.device(diff_args.device))  #mid: mid channel (removed 8 to save memory)
-	image_sizes = (368)  # Reduced from 1400
+	image_sizes = (544)  # Reduced from 1400
 	image_width = (816)  # Reduced from 1000
 	imagen = ElucidatedImagen(
 		unets = (unet1),

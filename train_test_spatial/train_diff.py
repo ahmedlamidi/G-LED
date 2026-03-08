@@ -78,15 +78,18 @@ def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler
                 # Use 50% condition / 53% target split with padding to divisible by 16
                 # batch shape: [B, T, C, H, W] = [B, T, 1, 720, 820]
 		H, W = batch.shape[-2], batch.shape[-1]
-		# Assuming [B, T, C, H, W]
-		# cond_width = int(W * 0.50)   # 50% condition = 410
-		# target_width = int(W * 0.53) # 53% target = 435
 		
 		# batch_cond = batch[..., :cond_width]           # First 50%
 		# batch = batch[..., (W - target_width):]        # Last 53%
 		
-		batch_cond = batch[..., 0::2, :]  # Every other level (even rows) - known
-		batch      = batch[..., 1::2, :]  # Interleaved missing levels (odd rows) - to predict
+		batch_cond = batch[..., 0::4, :]  # Every 4th level (0, 4, 8, ...) - known
+		# Create mask for label indices (1, 2, 3, 5, 6, 7, 9, 10, 11, ...)
+		H = batch.shape[-2]
+		label_indices = []
+		for i in range(H):
+			if i % 4 != 0:  # Not condition indices (0, 4, 8, ...)
+				label_indices.append(i)
+		batch = batch[..., label_indices, :]  # 3 out of every 4 levels - to predict
 		# Pad height to divisible by 16
 		def pad_width_to_16(tensor):
 			# tensor shape: [B, T, C, H, W]
