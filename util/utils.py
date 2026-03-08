@@ -24,18 +24,66 @@ def get_data_location(args):
 	return data_location
 
 
-def save_loss(args, loss_list, Nt):
-	plt.figure()
-	plt.plot(loss_list,'-o')
-	plt.yscale('log')
-	plt.xlabel('epoch')
-	plt.ylabel('loss')
-	plt.title(str(min(loss_list))+'Nt'+str(Nt))
-	print(os.path.join(args.logging_path, 'loss_curve.png'))
-	plt.savefig(os.path.join(args.logging_path, 'loss_curve.png'))
-	plt.close()
-	np.savetxt(os.path.join(args.logging_path, 'loss_curve.txt'), 
-				np.asarray(loss_list))
+def save_loss(args, loss_data, Nt):
+	# Handle both old format (single loss list) and new format (dict with multiple losses)
+	if isinstance(loss_data, dict):
+		# New format with multiple loss components
+		total_losses = loss_data.get('total', [])
+		data_losses = loss_data.get('data', [])
+		physics_losses = loss_data.get('physics', [])
+		
+		plt.figure(figsize=(12, 4))
+		
+		# Plot 1: Total Loss
+		plt.subplot(1, 3, 1)
+		plt.plot(total_losses, '-o', color='blue')
+		plt.yscale('log')
+		plt.xlabel('epoch')
+		plt.ylabel('Total Loss')
+		plt.title(f'Total Loss (min: {min(total_losses):.6f})')
+		plt.grid(True)
+		
+		# Plot 2: Data Loss  
+		plt.subplot(1, 3, 2)
+		plt.plot(data_losses, '-o', color='green')
+		plt.yscale('log')
+		plt.xlabel('epoch')
+		plt.ylabel('Data Loss')
+		plt.title(f'Data Loss (min: {min(data_losses):.6f})')
+		plt.grid(True)
+		
+		# Plot 3: Physics Loss
+		plt.subplot(1, 3, 3)
+		plt.plot(physics_losses, '-o', color='red')
+		plt.yscale('log')
+		plt.xlabel('epoch')
+		plt.ylabel('Physics Loss')
+		plt.title(f'Physics Loss (min: {min(physics_losses):.6f})')
+		plt.grid(True)
+		
+		plt.tight_layout()
+		plt.savefig(os.path.join(args.logging_path, 'loss_curves.png'))
+		plt.close()
+		
+		# Save all loss curves to separate files
+		np.savetxt(os.path.join(args.logging_path, 'total_loss.txt'), np.asarray(total_losses))
+		np.savetxt(os.path.join(args.logging_path, 'data_loss.txt'), np.asarray(data_losses))
+		np.savetxt(os.path.join(args.logging_path, 'physics_loss.txt'), np.asarray(physics_losses))
+		
+	else:
+		# Original format for backward compatibility
+		loss_list = loss_data
+		plt.figure()
+		plt.plot(loss_list,'-o')
+		plt.yscale('log')
+		plt.xlabel('epoch')
+		plt.ylabel('loss')
+		plt.title(str(min(loss_list))+'Nt'+str(Nt))
+		print(os.path.join(args.logging_path, 'loss_curve.png'))
+		plt.savefig(os.path.join(args.logging_path, 'loss_curve.png'))
+		plt.close()
+		np.savetxt(os.path.join(args.logging_path, 'loss_curve.txt'), 
+					np.asarray(loss_list))
 
 def save_args(args):
 	with open(os.path.join(args.logging_path, 'args.txt'), 'w') as f:

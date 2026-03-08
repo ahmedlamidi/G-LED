@@ -13,12 +13,26 @@ def train_diff(diff_args,
 			   trainer,
 			   data_loader,
 			   start_epoch=0):
-	# Load previous loss list if resuming
-	loss_list = []
-	loss_file = os.path.join(diff_args.logging_path, 'loss_curve.txt')
-	if start_epoch > 0 and os.path.exists(loss_file):
-		loss_list = list(np.loadtxt(loss_file))
-		print(f"Loaded {len(loss_list)} previous loss values")
+	# Load previous loss lists if resuming (support both old and new format)
+	total_loss_list, data_loss_list, physics_loss_list = [], [], []
+	
+	# Try loading new format first
+	total_file = os.path.join(diff_args.logging_path, 'total_loss.txt')
+	data_file = os.path.join(diff_args.logging_path, 'data_loss.txt')
+	physics_file = os.path.join(diff_args.logging_path, 'physics_loss.txt')
+	
+	if start_epoch > 0:
+		if os.path.exists(total_file):
+			total_loss_list = list(np.loadtxt(total_file))
+			data_loss_list = list(np.loadtxt(data_file)) if os.path.exists(data_file) else []
+			physics_loss_list = list(np.loadtxt(physics_file)) if os.path.exists(physics_file) else []
+			print(f"Loaded {len(total_loss_list)} previous loss values")
+		else:
+			# Fallback to old format
+			old_loss_file = os.path.join(diff_args.logging_path, 'loss_curve.txt')
+			if os.path.exists(old_loss_file):
+				total_loss_list = list(np.loadtxt(old_loss_file))
+				print(f"Loaded {len(total_loss_list)} previous loss values (old format)")
 	
 	# Try to get start_epoch from saved checkpoint epoch file
 	epoch_file = os.path.join(diff_args.model_save_path, 'best_model_sofar_epoch')
@@ -33,7 +47,9 @@ def train_diff(diff_args,
 								     	 mode=seq_args.coarse_mode)
 		up_sampler   = torch.nn.Upsample(size=[720, 448], 
 								     	 mode=seq_args.coarse_mode)
-		model, loss = train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler)
+		model, loss_components = train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler)
+		total_loss, data_loss, physics_loss = loss_components
+		
 		if epoch % 1 ==0 and epoch > 0:
 			peep = 0
 			#save_loss(diff_args, loss_list+[loss],epoch)
@@ -51,14 +67,25 @@ def train_diff(diff_args,
 		np.savetxt(os.path.join(diff_args.model_save_path, 'latest_epoch'), np.array([epoch]))
 		
 		if epoch >= 1:
-			if len(loss_list) == 0 or loss < min(loss_list):
-				save_loss(diff_args, loss_list+[loss],epoch)
+			if len(total_loss_list) == 0 or total_loss < min(total_loss_list):
+				# Save with new format
+				loss_dict = {
+					'total': total_loss_list + [total_loss],
+					'data': data_loss_list + [data_loss],
+					'physics': physics_loss_list + [physics_loss]
+				}
+				save_loss(diff_args, loss_dict, epoch)
 				model.save(path=os.path.join(diff_args.model_save_path, 
 											'best_model_sofar'))
 				np.savetxt(os.path.join(diff_args.model_save_path, 
 									'best_model_sofar_epoch'),np.ones(2)*epoch)
-		loss_list.append(loss) 
-		print("finish training epoch {}".format(epoch))
+		
+		# Update loss lists
+		total_loss_list.append(total_loss)
+		data_loss_list.append(data_loss) 
+		physics_loss_list.append(physics_loss)
+		
+		print(f"Epoch {epoch}: Total Loss={total_loss:.6f}, Data Loss={data_loss:.6f}, Physics Loss={physics_loss:.6f}")
 
 
 def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler):
@@ -111,8 +138,26 @@ def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler
 		batch= batch.permute([0,2,1,3,4])
 		batch_cond = batch_cond.permute([0,2,1,3,4])
 		#print(batch.device)
-		loss=trainer(batch,cond_images=batch_cond,unet_number=1,ignore_time=False)
+		loss_result = trainer(batch,cond_images=batch_cond,unet_number=1,ignore_time=False)
 		trainer.update(unet_number=1)
-		loss_epoch.append(loss)
-	return trainer, sum(loss_epoch)/len(loss_epoch)
+		
+		# Handle both old (single loss) and new (tuple) format
+		if isinstance(loss_result, tuple):
+			total_loss, data_loss, physics_loss = loss_result
+			loss_epoch.append((total_loss.item() if hasattr(total_loss, 'item') else total_loss, data_loss, physics_loss))
+		else:
+			# Old format - single loss
+			loss_val = loss_result.item() if hasattr(loss_result, 'item') else loss_result
+			loss_epoch.append((loss_val, loss_val, 0.0))
+	
+	# Average all components
+	total_losses = [x[0] for x in loss_epoch]
+	data_losses = [x[1] for x in loss_epoch]
+	physics_losses = [x[2] for x in loss_epoch]
+	
+	avg_total = sum(total_losses) / len(total_losses)
+	avg_data = sum(data_losses) / len(data_losses)
+	avg_physics = sum(physics_losses) / len(physics_losses)
+	
+	return trainer, (avg_total, avg_data, avg_physics)
 

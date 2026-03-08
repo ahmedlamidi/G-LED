@@ -127,7 +127,8 @@ if __name__ == '__main__':
 		S_tmax = 50,
 		S_noise = 1.003,
 		condition_on_text = False,
-		auto_normalize_img = False  # Han Gao make it false
+		auto_normalize_img = False,  # Han Gao make it false
+		physics_loss_weight = 0.01   # Enable physics-informed loss: p(s, θ) = p(-s, θ + 180°)
 		).to(torch.device(diff_args.device))
 	trainer = ImagenTrainer(imagen, device =torch.device(diff_args.device))
 	

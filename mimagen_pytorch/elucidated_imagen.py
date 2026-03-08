@@ -108,6 +108,7 @@ class ElucidatedImagen(nn.Module):
             S_tmin=0.05,
             S_tmax=50,
             S_noise=1.003,
+            physics_loss_weight=0.01,  # weight for physics-informed loss: p(s, θ) = p(-s, θ + 180°)
     ):
         super().__init__()
 
@@ -206,6 +207,10 @@ class ElucidatedImagen(nn.Module):
 
         self.dynamic_thresholding = cast_tuple(dynamic_thresholding, num_unets)
         self.dynamic_thresholding_percentile = dynamic_thresholding_percentile
+        
+        # physics loss weight
+        
+        self.physics_loss_weight = physics_loss_weight
 
         # elucidating parameters
 
@@ -951,9 +956,76 @@ class ElucidatedImagen(nn.Module):
         losses = reduce(losses, 'b ... -> b', 'mean')
 
         # loss weighting
-
         losses = losses * self.loss_weight(hp.sigma_data, sigmas)
+        
+        # Physics-informed loss: p(s, θ) = p(-s, θ + 180°)
+        # First reconstruct full sinogram from condition (1/4) + prediction (3/4)
+        physics_loss = 0.0
+        if hasattr(self, 'physics_loss_weight') and self.physics_loss_weight > 0 and exists(cond_images):
+            # Reconstruct full sinogram by combining condition and prediction
+            pred = denoised_images
+            if pred.ndim == 5:  # Video/3D case: [B, C, T, H, W]
+                B, C, T, H_pred, W = pred.shape
+                _, _, _, H_cond, _ = cond_images.shape
+                H_full = H_cond * 4  # Original full height (condition is every 4th row)
+                
+                # Create full sinogram tensor
+                full_sinogram = torch.zeros((B, C, T, H_full, W), device=pred.device, dtype=pred.dtype)
+                
+                # Place condition at every 4th row (0, 4, 8, ...)
+                full_sinogram[:, :, :, 0::4, :] = cond_images
+                
+                # Place prediction at remaining rows (1,2,3, 5,6,7, 9,10,11, ...)
+                pred_idx = 0
+                for i in range(H_full):
+                    if i % 4 != 0:  # Not condition indices
+                        full_sinogram[:, :, :, i, :] = pred[:, :, :, pred_idx, :]
+                        pred_idx += 1
+                
+                # Reshape to process each frame
+                full_sinogram = rearrange(full_sinogram, 'b c t h w -> (b t) c h w')
+                
+            else:  # 2D case: [B, C, H, W]
+                B, C, H_pred, W = pred.shape
+                _, _, H_cond, _ = cond_images.shape
+                H_full = H_cond * 4  # Original full height
+                
+                # Create full sinogram tensor
+                full_sinogram = torch.zeros((B, C, H_full, W), device=pred.device, dtype=pred.dtype)
+                
+                # Place condition at every 4th row (0, 4, 8, ...)
+                full_sinogram[:, :, 0::4, :] = cond_images
+                
+                # Place prediction at remaining rows
+                pred_idx = 0
+                for i in range(H_full):
+                    if i % 4 != 0:  # Not condition indices
+                        full_sinogram[:, :, i, :] = pred[:, :, pred_idx, :]
+                        pred_idx += 1
+            
+            # Apply physics constraint on reconstructed full sinogram
+            H_full = full_sinogram.shape[-2]
+            num_angle_pairs = H_full // 2
+            
+            if num_angle_pairs > 0:
+                # Split into two halves: first half (θ) and second half (θ + 180°)
+                angles_1 = full_sinogram[:, :, :num_angle_pairs, :]  # First half
+                angles_2 = full_sinogram[:, :, num_angle_pairs:2*num_angle_pairs, :]  # Second half
+                
+                # Flip angles_1 horizontally (negate s coordinate: p(-s, θ))
+                angles_1_flipped = torch.flip(angles_1, dims=[-1])  # Flip along W dimension
+                
+                # Calculate MSE between p(-s, θ) and p(s, θ + 180°)
+                physics_loss = F.mse_loss(angles_1_flipped, angles_2, reduction='mean')
 
-        # return average loss
+        # Combine data loss and physics loss
+        data_loss = losses.mean()
+        total_loss = data_loss
+        if hasattr(self, 'physics_loss_weight') and self.physics_loss_weight > 0:
+            total_loss = data_loss + self.physics_loss_weight * physics_loss
 
-        return losses.mean()
+        # Return tuple of (total_loss, data_loss, physics_loss) for separate tracking
+        if hasattr(self, 'physics_loss_weight') and self.physics_loss_weight > 0:
+            return total_loss, data_loss.item(), physics_loss.item() if isinstance(physics_loss, torch.Tensor) else physics_loss
+        else:
+            return total_loss, data_loss.item(), 0.0
