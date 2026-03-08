@@ -111,7 +111,7 @@ if __name__ == '__main__':
 	
 	data_loader = DataLoader(dataset=data_set, 
 							 shuffle=False,
-							 batch_size=1)
+							 batch_size=4)
 
 	
 	
