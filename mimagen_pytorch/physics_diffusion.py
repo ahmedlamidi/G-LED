@@ -47,7 +47,8 @@ from mimagen_pytorch.imagen_video import (
 
 from mimagen_pytorch.t5 import t5_encode_text, get_encoded_dim, DEFAULT_T5_NAME
 
-from data_preprocess import fft, fft_inverse
+# Note: fft and fft_inverse are now class methods, not external imports
+# from data_preprocess import fft, fft_inverse
 # constants
 
 Hparams_fields = [

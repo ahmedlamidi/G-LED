@@ -1,4 +1,76 @@
-/venv
-/output*
-/.venv
-/data
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+
+# PyTorch
+*.pth
+*.pt
+*.ckpt
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Model checkpoints and outputs
+checkpoints/
+output/
+logs/
+wandb/
+runs/
+
+# Data files (uncomment if data should not be tracked)
+# data/Dataset/
+# *.dcm
+# *.npy
+# *.npz
+
+# Temporary files
+*.tmp
+*.log
+*.cache
+
+# System files
+.DS_Store
+Thumbs.db
+
+# SLURM outputs
+slurm-*.out
+*.out
+
+# Tensorboard
+events.out.tfevents.*
