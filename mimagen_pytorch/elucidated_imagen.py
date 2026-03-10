@@ -959,51 +959,72 @@ class ElucidatedImagen(nn.Module):
         losses = losses * self.loss_weight(hp.sigma_data, sigmas)
         
         # Physics-informed loss: p(s, θ) = p(-s, θ + 180°)
-        # First reconstruct full sinogram from condition (1/4) + prediction (3/4)
+        # Directly slice off padding applied in train_diff.py and combine condition + prediction 
         physics_loss = 0.0
         if hasattr(self, 'physics_loss_weight') and self.physics_loss_weight > 0 and exists(cond_images):
-            # Reconstruct full sinogram by combining condition and prediction
             pred = denoised_images
-            if pred.ndim == 5:  # Video/3D case: [B, C, T, H, W]
-                B, C, T, H_pred, W = pred.shape
-                _, _, _, H_cond, _ = cond_images.shape
-                H_full = H_cond * 4  # Original full height (condition is every 4th row)
+            
+            # Directly calculate original height by reversing the padding formula: pad_h = (16 - h % 16) % 16
+            def remove_padding(tensor):
+                """Remove padding from height dimension to get original size"""
+                padded_h = tensor.shape[-2]
+                # Find original height that would create this padded height
+                original_h = padded_h
+                while original_h > 0:
+                    pad_needed = (16 - original_h % 16) % 16
+                    if original_h + pad_needed == padded_h:
+                        break
+                    original_h -= 1
+                # Slice to original height
+                if tensor.ndim == 5:  # [B, C, T, H, W]
+                    return tensor[:, :, :, :original_h, :]
+                else:  # [B, C, H, W] 
+                    return tensor[:, :, :original_h, :]
+            
+            # Remove padding from both prediction and condition tensors
+            pred_unpadded = remove_padding(pred)
+            cond_unpadded = remove_padding(cond_images)
+            
+            if pred_unpadded.ndim == 5:  # Video/3D case: [B, C, T, H, W]
+                B, C, T, H_pred_orig, W = pred_unpadded.shape
+                _, _, _, H_cond_orig, _ = cond_unpadded.shape
                 
-                # Create full sinogram tensor
-                full_sinogram = torch.zeros((B, C, T, H_full, W), device=pred.device, dtype=pred.dtype)
+                # Reconstruct original full sinogram (H_cond_orig * 4 total rows)
+                H_full_orig = H_cond_orig * 4
+                full_sinogram = torch.zeros((B, C, T, H_full_orig, W), device=pred.device, dtype=pred.dtype)
                 
                 # Place condition at every 4th row (0, 4, 8, ...)
-                full_sinogram[:, :, :, 0::4, :] = cond_images
+                full_sinogram[:, :, :, 0::4, :] = cond_unpadded
                 
                 # Place prediction at remaining rows (1,2,3, 5,6,7, 9,10,11, ...)
                 pred_idx = 0
-                for i in range(H_full):
-                    if i % 4 != 0:  # Not condition indices
-                        full_sinogram[:, :, :, i, :] = pred[:, :, :, pred_idx, :]
+                for i in range(H_full_orig):
+                    if i % 4 != 0 and pred_idx < H_pred_orig:
+                        full_sinogram[:, :, :, i, :] = pred_unpadded[:, :, :, pred_idx, :]
                         pred_idx += 1
                 
                 # Reshape to process each frame
                 full_sinogram = rearrange(full_sinogram, 'b c t h w -> (b t) c h w')
                 
             else:  # 2D case: [B, C, H, W]
-                B, C, H_pred, W = pred.shape
-                _, _, H_cond, _ = cond_images.shape
-                H_full = H_cond * 4  # Original full height
+                B, C, H_pred_orig, W = pred_unpadded.shape
+                _, _, H_cond_orig, _ = cond_unpadded.shape
                 
-                # Create full sinogram tensor
-                full_sinogram = torch.zeros((B, C, H_full, W), device=pred.device, dtype=pred.dtype)
+                # Reconstruct original full sinogram (H_cond_orig * 4 total rows)
+                H_full_orig = H_cond_orig * 4
+                full_sinogram = torch.zeros((B, C, H_full_orig, W), device=pred.device, dtype=pred.dtype)
                 
                 # Place condition at every 4th row (0, 4, 8, ...)
-                full_sinogram[:, :, 0::4, :] = cond_images
+                full_sinogram[:, :, 0::4, :] = cond_unpadded
                 
                 # Place prediction at remaining rows
                 pred_idx = 0
-                for i in range(H_full):
-                    if i % 4 != 0:  # Not condition indices
-                        full_sinogram[:, :, i, :] = pred[:, :, pred_idx, :]
+                for i in range(H_full_orig):
+                    if i % 4 != 0 and pred_idx < H_pred_orig:
+                        full_sinogram[:, :, i, :] = pred_unpadded[:, :, pred_idx, :]
                         pred_idx += 1
             
-            # Apply physics constraint on reconstructed full sinogram
+            # Apply physics constraint on reconstructed full sinogram (original dimensions only)
             H_full = full_sinogram.shape[-2]
             num_angle_pairs = H_full // 2
             

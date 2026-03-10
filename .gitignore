@@ -8,4 +8,4 @@
 /data/test_data
 validation/loss_plotter.py
 /ground_truth
-*pyc
+*.pyc*

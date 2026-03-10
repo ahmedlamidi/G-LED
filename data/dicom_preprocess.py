@@ -122,7 +122,7 @@ class dicom_dataset(Dataset):
         for series in total_series:
             vol_zyx, spacing = series
             if Interpolate:
-                vol_zyx = vol_zyx[:100]
+                vol_zyx = vol_zyx[:1]
             for ind in range(len(vol_zyx)):
                 sino = convert_sinogram(vol_zyx[ind], spacing[0], spacing[1], spacing[2],detector_count, angle_step)
                 # Normalize to [-1, 1]

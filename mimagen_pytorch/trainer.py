@@ -986,11 +986,26 @@ class ImagenTrainer(nn.Module):
         assert not exists(self.only_train_unet_number) or self.only_train_unet_number == unet_number, f'you can only train unet #{self.only_train_unet_number}'
 
         total_loss = 0.
+        accumulated_data_loss = 0.
+        accumulated_physics_loss = 0.
+        is_tuple_format = False
+        
         #print(args[0].device)
         for chunk_size_frac, (chunked_args, chunked_kwargs) in split_args_and_kwargs(*args, split_size = max_batch_size, **kwargs):
             with self.accelerator.autocast():
                 self.accelerator.state.device = self.mydevice # Han Gao added
-                loss = self.imagen(*chunked_args, unet = self.unet_being_trained, unet_number = unet_number, **chunked_kwargs)
+                loss_result = self.imagen(*chunked_args, unet = self.unet_being_trained, unet_number = unet_number, **chunked_kwargs)
+                
+                # Handle new tuple format (total_loss, data_loss, physics_loss) or old single loss format
+                if isinstance(loss_result, tuple):
+                    is_tuple_format = True
+                    loss = loss_result[0]  # Use total_loss for backward pass
+                    # Accumulate individual loss components
+                    accumulated_data_loss += loss_result[1] * chunk_size_frac
+                    accumulated_physics_loss += loss_result[2] * chunk_size_frac
+                else:
+                    loss = loss_result  # Old format compatibility
+                    
                 loss = loss * chunk_size_frac
 
             total_loss += loss.item()
@@ -998,4 +1013,8 @@ class ImagenTrainer(nn.Module):
             if self.training:
                 self.accelerator.backward(loss)
 
-        return total_loss
+        # Return appropriate format based on what we received
+        if is_tuple_format:
+            return total_loss, accumulated_data_loss, accumulated_physics_loss
+        else:
+            return total_loss
