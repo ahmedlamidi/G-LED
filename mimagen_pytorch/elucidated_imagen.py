@@ -1022,17 +1022,6 @@ class ElucidatedImagen(nn.Module):
             if terms:
                 physics_loss = sum(terms) / len(terms)
 
-            # ── Step 3: Helgason-Ludwig 0th moment consistency
-            pred_m0 = pred_unp.sum(dim=-1)
-            cond_m0 = cond_unp.sum(dim=-1)
-            if pred_unp.ndim == 5:
-                pred_m0 = rearrange(pred_m0, 'b c t h -> (b t) c h')
-                cond_m0 = rearrange(cond_m0, 'b c t h -> (b t) c h')
-            all_m0 = torch.cat([cond_m0, pred_m0], dim=-1)
-            hl_loss = all_m0.var(dim=-1).mean()
-
-            physics_loss = physics_loss + 0.1 * hl_loss
-
         # ── Combine losses ────────────────────────────────────────────
         data_loss = losses.mean()
         total_loss = data_loss + self.physics_loss_weight * physics_loss

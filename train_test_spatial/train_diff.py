@@ -66,24 +66,22 @@ def train_diff(diff_args,
 		model.save(path=os.path.join(diff_args.model_save_path, 'latest_checkpoint'))
 		np.savetxt(os.path.join(diff_args.model_save_path, 'latest_epoch'), np.array([epoch]))
 		
-		if epoch >= 1:
-			if len(total_loss_list) == 0 or total_loss < min(total_loss_list):
-				# Save with new format
-				loss_dict = {
-					'total': total_loss_list + [total_loss],
-					'data': data_loss_list + [data_loss],
-					'physics': physics_loss_list + [physics_loss]
-				}
-				save_loss(diff_args, loss_dict, epoch)
-				model.save(path=os.path.join(diff_args.model_save_path, 
-											'best_model_sofar'))
-				np.savetxt(os.path.join(diff_args.model_save_path, 
-									'best_model_sofar_epoch'),np.ones(2)*epoch)
-		
 		# Update loss lists
 		total_loss_list.append(total_loss)
 		data_loss_list.append(data_loss) 
 		physics_loss_list.append(physics_loss)
+		
+		# Save loss values every epoch
+		np.savetxt(os.path.join(diff_args.logging_path, 'total_loss.txt'), total_loss_list)
+		np.savetxt(os.path.join(diff_args.logging_path, 'data_loss.txt'), data_loss_list)
+		np.savetxt(os.path.join(diff_args.logging_path, 'physics_loss.txt'), physics_loss_list)
+		
+		# Save best model when total loss improves
+		if epoch >= 1 and total_loss < min(total_loss_list[:-1], default=float('inf')):
+			model.save(path=os.path.join(diff_args.model_save_path, 
+										'best_model_sofar'))
+			np.savetxt(os.path.join(diff_args.model_save_path, 
+								'best_model_sofar_epoch'),np.ones(2)*epoch)
 		
 		print(f"Epoch {epoch}: Total Loss={total_loss:.6f}, Data Loss={data_loss:.6f}, Physics Loss={physics_loss:.6f}")
 
