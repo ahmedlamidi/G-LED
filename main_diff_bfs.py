@@ -97,7 +97,7 @@ if __name__ == '__main__':
  
 	data_loader = DataLoader(dataset=data_set, 
 							 shuffle=diff_args.shuffle,
-							 batch_size=8)
+							 batch_size=4)
 	
 	"""
 	Create diffusion model
