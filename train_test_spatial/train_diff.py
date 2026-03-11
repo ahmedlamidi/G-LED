@@ -82,14 +82,17 @@ def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler
 		# batch_cond = batch[..., :cond_width]           # First 50%
 		# batch = batch[..., (W - target_width):]        # Last 53%
 		
-		batch_cond = batch[..., 0::4, :]  # Every 4th level (0, 4, 8, ...) - known
-		# Create mask for label indices (1, 2, 3, 5, 6, 7, 9, 10, 11, ...)
 		H = batch.shape[-2]
-		label_indices = []
+		cutoff = int(H * 0.75)  # Only use first 75% of height for condition
+		batch_cond_indices = []  # Every 4th level up to 75% of height
+		label_indices = []  # Everything else (non-4th levels + last 25%)
 		for i in range(H):
-			if i % 4 != 0:  # Not condition indices (0, 4, 8, ...)
+			if i % 4 == 0 and i < cutoff:  # Every 4th level in first 75%
+				batch_cond_indices.append(i)
+			else:  # Everything else
 				label_indices.append(i)
-		batch = batch[..., label_indices, :]  # 3 out of every 4 levels - to predict
+		batch_cond = batch[..., batch_cond_indices, :]  # Condition: every 4th in first 75%
+		batch = batch[..., label_indices, :]  # Target: rest
 		# Pad height to divisible by 16
 		def pad_width_to_16(tensor):
 			# tensor shape: [B, T, C, H, W]
