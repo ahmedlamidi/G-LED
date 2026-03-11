@@ -800,6 +800,11 @@ class ElucidatedImagen(nn.Module):
             text_masks=None,
             unet_number=None,
             cond_images=None,
+            cond_indices=None,       # ← new parameter
+            label_indices=None,      # ← new parameter
+            original_pred_h=None,    # ← new parameter
+            original_cond_h=None,    # ← new parameter
+            total_angles=720,        # ← new parameter
             **kwargs
     ):
         #images = images.to(self.device) # Han Gao added 
@@ -958,95 +963,78 @@ class ElucidatedImagen(nn.Module):
         # loss weighting
         losses = losses * self.loss_weight(hp.sigma_data, sigmas)
         
-        # Physics-informed loss: p(s, θ) = p(-s, θ + 180°)
-        # Directly slice off padding applied in train_diff.py and combine condition + prediction 
-        physics_loss = 0.0
-        if hasattr(self, 'physics_loss_weight') and self.physics_loss_weight > 0 and exists(cond_images):
-            pred = denoised_images
-            
-            # Directly calculate original height by reversing the padding formula: pad_h = (16 - h % 16) % 16
-            def remove_padding(tensor):
-                """Remove padding from height dimension to get original size"""
-                padded_h = tensor.shape[-2]
-                # Find original height that would create this padded height
-                original_h = padded_h
-                while original_h > 0:
-                    pad_needed = (16 - original_h % 16) % 16
-                    if original_h + pad_needed == padded_h:
-                        break
-                    original_h -= 1
-                # Slice to original height
-                if tensor.ndim == 5:  # [B, C, T, H, W]
-                    return tensor[:, :, :, :original_h, :]
-                else:  # [B, C, H, W] 
-                    return tensor[:, :, :original_h, :]
-            
-            # Remove padding from both prediction and condition tensors
-            pred_unpadded = remove_padding(pred)
-            cond_unpadded = remove_padding(cond_images)
-            
-            if pred_unpadded.ndim == 5:  # Video/3D case: [B, C, T, H, W]
-                B, C, T, H_pred_orig, W = pred_unpadded.shape
-                _, _, _, H_cond_orig, _ = cond_unpadded.shape
-                
-                # Reconstruct original full sinogram (H_cond_orig * 4 total rows)
-                H_full_orig = H_cond_orig * 4
-                full_sinogram = torch.zeros((B, C, T, H_full_orig, W), device=pred.device, dtype=pred.dtype)
-                
-                # Place condition at every 4th row (0, 4, 8, ...)
-                full_sinogram[:, :, :, 0::4, :] = cond_unpadded
-                
-                # Place prediction at remaining rows (1,2,3, 5,6,7, 9,10,11, ...)
-                pred_idx = 0
-                for i in range(H_full_orig):
-                    if i % 4 != 0 and pred_idx < H_pred_orig:
-                        full_sinogram[:, :, :, i, :] = pred_unpadded[:, :, :, pred_idx, :]
-                        pred_idx += 1
-                
-                # Reshape to process each frame
-                full_sinogram = rearrange(full_sinogram, 'b c t h w -> (b t) c h w')
-                
-            else:  # 2D case: [B, C, H, W]
-                B, C, H_pred_orig, W = pred_unpadded.shape
-                _, _, H_cond_orig, _ = cond_unpadded.shape
-                
-                # Reconstruct original full sinogram (H_cond_orig * 4 total rows)
-                H_full_orig = H_cond_orig * 4
-                full_sinogram = torch.zeros((B, C, H_full_orig, W), device=pred.device, dtype=pred.dtype)
-                
-                # Place condition at every 4th row (0, 4, 8, ...)
-                full_sinogram[:, :, 0::4, :] = cond_unpadded
-                
-                # Place prediction at remaining rows
-                pred_idx = 0
-                for i in range(H_full_orig):
-                    if i % 4 != 0 and pred_idx < H_pred_orig:
-                        full_sinogram[:, :, i, :] = pred_unpadded[:, :, pred_idx, :]
-                        pred_idx += 1
-            
-            # Apply physics constraint on reconstructed full sinogram (original dimensions only)
-            H_full = full_sinogram.shape[-2]
-            num_angle_pairs = H_full // 2
-            
-            if num_angle_pairs > 0:
-                # Split into two halves: first half (θ) and second half (θ + 180°)
-                angles_1 = full_sinogram[:, :, :num_angle_pairs, :]  # First half
-                angles_2 = full_sinogram[:, :, num_angle_pairs:2*num_angle_pairs, :]  # Second half
-                
-                # Flip angles_1 horizontally (negate s coordinate: p(-s, θ))
-                angles_1_flipped = torch.flip(angles_1, dims=[-1])  # Flip along W dimension
-                
-                # Calculate MSE between p(-s, θ) and p(s, θ + 180°)
-                physics_loss = F.mse_loss(angles_1_flipped, angles_2, reduction='mean')
+        physics_loss = torch.tensor(0.0, device=images.device)
 
-        # Combine data loss and physics loss
+        can_compute_physics = (
+            self.physics_loss_weight > 0
+            and exists(cond_images)
+            and exists(cond_indices)
+            and exists(label_indices)
+            and exists(original_pred_h)
+            and exists(original_cond_h)
+        )
+
+        if can_compute_physics:
+
+            # ── Step 1: Remove padding, detach cond (no grads needed for known data)
+            if denoised_images.ndim == 5:
+                pred_unp = denoised_images[:, :, :, :original_pred_h, :]
+                cond_unp = cond_images[:, :, :, :original_cond_h, :].detach()
+            else:
+                pred_unp = denoised_images[:, :, :original_pred_h, :]
+                cond_unp = cond_images[:, :, :original_cond_h, :].detach()
+
+            # ── Step 2: Symmetry loss directly on pred/cond rows (no full sinogram)
+            # p(θ, s) = p(θ + 180°, -s) → angle i pairs with angle i + half
+            half = total_angles // 2
+            label_pos = {a: p for p, a in enumerate(label_indices)}
+            cond_pos = {a: p for p, a in enumerate(cond_indices)}
+
+            bg1, bg2 = [], []       # both-generated: pred positions
+            mp1, mc2 = [], []       # mixed: pred in first half, cond in second
+            mc1, mp2 = [], []       # mixed: cond in first half, pred in second
+
+            for i in range(half):
+                j = i + half
+                i_gen = i in label_pos
+                j_gen = j in label_pos
+                if i_gen and j_gen:
+                    bg1.append(label_pos[i]); bg2.append(label_pos[j])
+                elif i_gen and j in cond_pos:
+                    mp1.append(label_pos[i]); mc2.append(cond_pos[j])
+                elif j_gen and i in cond_pos:
+                    mc1.append(cond_pos[i]); mp2.append(label_pos[j])
+
+            terms = []
+            if bg1:
+                a = pred_unp[..., bg1, :]
+                b = torch.flip(pred_unp[..., bg2, :], dims=[-1])
+                terms.append(F.mse_loss(a, b))
+            if mp1:
+                a = pred_unp[..., mp1, :]
+                b = torch.flip(cond_unp[..., mc2, :], dims=[-1])
+                terms.append(F.mse_loss(a, b) * 0.5)
+            if mc1:
+                a = cond_unp[..., mc1, :]
+                b = torch.flip(pred_unp[..., mp2, :], dims=[-1])
+                terms.append(F.mse_loss(a, b) * 0.5)
+
+            if terms:
+                physics_loss = sum(terms) / len(terms)
+
+            # ── Step 3: Helgason-Ludwig 0th moment consistency
+            pred_m0 = pred_unp.sum(dim=-1)
+            cond_m0 = cond_unp.sum(dim=-1)
+            if pred_unp.ndim == 5:
+                pred_m0 = rearrange(pred_m0, 'b c t h -> (b t) c h')
+                cond_m0 = rearrange(cond_m0, 'b c t h -> (b t) c h')
+            all_m0 = torch.cat([cond_m0, pred_m0], dim=-1)
+            hl_loss = all_m0.var(dim=-1).mean()
+
+            physics_loss = physics_loss + 0.1 * hl_loss
+
+        # ── Combine losses ────────────────────────────────────────────
         data_loss = losses.mean()
-        total_loss = data_loss
-        if hasattr(self, 'physics_loss_weight') and self.physics_loss_weight > 0:
-            total_loss = data_loss + self.physics_loss_weight * physics_loss
+        total_loss = data_loss + self.physics_loss_weight * physics_loss
 
-        # Return tuple of (total_loss, data_loss, physics_loss) for separate tracking
-        if hasattr(self, 'physics_loss_weight') and self.physics_loss_weight > 0:
-            return total_loss, data_loss.item(), physics_loss.item() if isinstance(physics_loss, torch.Tensor) else physics_loss
-        else:
-            return total_loss, data_loss.item(), 0.0
+        return total_loss, data_loss.item(), physics_loss.item()

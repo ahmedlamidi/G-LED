@@ -990,8 +990,13 @@ class ImagenTrainer(nn.Module):
         accumulated_physics_loss = 0.
         is_tuple_format = False
         
+        # Extract non-batchable kwargs before splitting (lists get incorrectly chunked)
+        physics_meta_keys = ('cond_indices', 'label_indices', 'original_pred_h', 'original_cond_h', 'total_angles')
+        physics_meta = {k: kwargs.pop(k) for k in physics_meta_keys if k in kwargs}
+
         #print(args[0].device)
         for chunk_size_frac, (chunked_args, chunked_kwargs) in split_args_and_kwargs(*args, split_size = max_batch_size, **kwargs):
+            chunked_kwargs.update(physics_meta)
             with self.accelerator.autocast():
                 self.accelerator.state.device = self.mydevice # Han Gao added
                 loss_result = self.imagen(*chunked_args, unet = self.unet_being_trained, unet_number = unet_number, **chunked_kwargs)

@@ -30,7 +30,7 @@ class Args:
 		for finding the dynamics dir
 		"""
 		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/mar_8_horizontal_step_4_75%',
+								 default='output/mar_11_horizontal_PIML_step_4_modified',
 								 help='all the information of ks training')
 		"""
 		for diffusion model
@@ -97,7 +97,9 @@ if __name__ == '__main__':
  
 	data_loader = DataLoader(dataset=data_set, 
 							 shuffle=diff_args.shuffle,
-							 batch_size=4)
+							 batch_size=2,
+							 num_workers=2,
+							 pin_memory=True)
 	
 	"""
 	Create diffusion model

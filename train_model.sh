@@ -3,7 +3,7 @@
 #SBATCH -p Quick
 #SBATCH --cpus-per-task=2
 #SBATCH --time=24:00:00
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:A40:1
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=ahmedlamidi@usf.edu
 #SBATCH --mem=64G

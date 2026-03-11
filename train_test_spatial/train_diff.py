@@ -88,76 +88,77 @@ def train_diff(diff_args,
 		print(f"Epoch {epoch}: Total Loss={total_loss:.6f}, Data Loss={data_loss:.6f}, Physics Loss={physics_loss:.6f}")
 
 
-def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler):
-	loss_epoch = []
-	print('Iteration is ', len(data_loader))
-	for iteration, batch in tqdm(enumerate(data_loader)):
-		#batch = batch.to(diff_args.device).float()
-		bsize = batch.shape[0]
-		ntime = batch.shape[1]
-  
-		
-		# Reshape batch to [B*T, C, H, W] then back to [B, T, C, H, W]
-                # batch comes as [B, T, 1, 1400, 1000] from dataset
-                # batch = batch.reshape([bsize*ntime, num_velocity, 1440, 1000])
-                # batch = batch.reshape([bsize, ntime, num_velocity, 1440, 1000])
-		
-                # Use 50% condition / 53% target split with padding to divisible by 16
-                # batch shape: [B, T, C, H, W] = [B, T, 1, 720, 820]
-		H, W = batch.shape[-2], batch.shape[-1]
-		
-		# batch_cond = batch[..., :cond_width]           # First 50%
-		# batch = batch[..., (W - target_width):]        # Last 53%
-		
-		batch_cond = batch[..., 0::4, :]  # Every 4th level (0, 4, 8, ...) - known
-		# Create mask for label indices (1, 2, 3, 5, 6, 7, 9, 10, 11, ...)
-		H = batch.shape[-2]
-		label_indices = []
-		for i in range(H):
-			if i % 4 != 0:  # Not condition indices (0, 4, 8, ...)
-				label_indices.append(i)
-		batch = batch[..., label_indices, :]  # 3 out of every 4 levels - to predict
-		# Pad height to divisible by 16
-		def pad_width_to_16(tensor):
-			# tensor shape: [B, T, C, H, W]
-			h = tensor.shape[-2]
-			pad_h = (16 - h % 16) % 16
-			if pad_h > 0:
-				# Reshape to 4D for padding (F.pad reflect doesn't support 5D)
-				B, T, C, H_orig, W = tensor.shape
-				tensor = tensor.reshape(B * T, C, H_orig, W)
-				# For 4D tensor: (left, right, top, bottom)
-				tensor = F.pad(tensor, (0, 0, 0, pad_h), mode='reflect')
-				tensor = tensor.reshape(B, T, C, H_orig + pad_h, W)
-			return tensor
-		
-		batch_cond = pad_width_to_16(batch_cond)
-		batch = pad_width_to_16(batch)            
+def train_epoch(diff_args, seq_args, trainer, data_loader, down_sampler, up_sampler):
+    loss_epoch = []
+    data_loss_epoch = []
+    physics_loss_epoch = []
 
-		#need # B x F x T x H x W
-		batch= batch.permute([0,2,1,3,4])
-		batch_cond = batch_cond.permute([0,2,1,3,4])
-		#print(batch.device)
-		loss_result = trainer(batch,cond_images=batch_cond,unet_number=1,ignore_time=False)
-		trainer.update(unet_number=1)
-		
-		# Handle both old (single loss) and new (tuple) format
-		if isinstance(loss_result, tuple):
-			total_loss, data_loss, physics_loss = loss_result
-			loss_epoch.append((total_loss.item() if hasattr(total_loss, 'item') else total_loss, data_loss, physics_loss))
-		else:
-			# Old format - single loss
-			loss_val = loss_result.item() if hasattr(loss_result, 'item') else loss_result
-			loss_epoch.append((loss_val, loss_val, 0.0))
-	
-	# Average all components
-	total_losses = [x[0] for x in loss_epoch]
-	data_losses = [x[1] for x in loss_epoch]
-	physics_losses = [x[2] for x in loss_epoch]
-	
-	avg_total = sum(total_losses) / len(total_losses)
-	avg_data = sum(data_losses) / len(data_losses)
-	avg_physics = sum(physics_losses) / len(physics_losses)
-	
-	return trainer, (avg_total, avg_data, avg_physics)
+    # Pre-compute indices once (constant across all iterations)
+    sample_H = 720  # sinogram height from dataset
+    cutoff = int(sample_H * 0.75)
+    batch_cond_indices = [i for i in range(sample_H) if i % 4 == 0 and i < cutoff]
+    label_indices = [i for i in range(sample_H) if not (i % 4 == 0 and i < cutoff)]
+    original_pred_h = len(label_indices)
+    original_cond_h = len(batch_cond_indices)
 
+    # Pre-compute padding amount
+    pred_pad = (16 - original_pred_h % 16) % 16
+    cond_pad = (16 - original_cond_h % 16) % 16
+
+    for iteration, batch in tqdm(enumerate(data_loader)):
+        H, W = batch.shape[-2], batch.shape[-1]
+
+        batch_cond = batch[..., batch_cond_indices, :]
+        batch_label = batch[..., label_indices, :]
+
+        if pred_pad > 0:
+            B, T, C, Hp, Wp = batch_label.shape
+            batch_label = batch_label.reshape(B * T, C, Hp, Wp)
+            batch_label = F.pad(batch_label, (0, 0, 0, pred_pad), mode='replicate')
+            batch_label = batch_label.reshape(B, T, C, Hp + pred_pad, Wp)
+        if cond_pad > 0:
+            B, T, C, Hc, Wc = batch_cond.shape
+            batch_cond = batch_cond.reshape(B * T, C, Hc, Wc)
+            batch_cond = F.pad(batch_cond, (0, 0, 0, cond_pad), mode='replicate')
+            batch_cond = batch_cond.reshape(B, T, C, Hc + cond_pad, Wc)
+
+        batch_label = batch_label.permute([0, 2, 1, 3, 4])
+        batch_cond  = batch_cond.permute([0, 2, 1, 3, 4])
+
+        result = trainer(
+            batch_label,
+            cond_images=batch_cond,
+            unet_number=1,
+            ignore_time=False,
+            cond_indices=batch_cond_indices,
+            label_indices=label_indices,
+            original_pred_h=original_pred_h,
+            original_cond_h=original_cond_h,
+            total_angles=H
+        )
+
+        # Properly unpack tuple
+        if isinstance(result, tuple):
+            loss, data_loss, physics_loss = result
+            data_loss_epoch.append(data_loss)
+            physics_loss_epoch.append(physics_loss)
+        else:
+            loss = result
+
+        loss_epoch.append(loss)
+
+        # Log every 50 iterations
+        if iteration % 50 == 0:
+            d = data_loss if isinstance(result, tuple) else loss
+            p = physics_loss if isinstance(result, tuple) else 0.0
+            ratio = p / (d + 1e-8)
+            print(f"  iter {iteration} | data: {d:.4f} | physics: {p:.6f} | ratio: {ratio:.4f}")
+
+    avg_loss = sum(loss_epoch) / len(loss_epoch)
+    avg_data = sum(data_loss_epoch) / len(data_loss_epoch) if data_loss_epoch else avg_loss
+    avg_phys = sum(physics_loss_epoch) / len(physics_loss_epoch) if physics_loss_epoch else 0.0
+    if data_loss_epoch:
+        print(f"Epoch avg | data: {avg_data:.4f} "
+              f"| physics: {avg_phys:.6f}")
+
+    return trainer, (avg_loss, avg_data, avg_phys)
