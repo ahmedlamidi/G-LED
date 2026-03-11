@@ -111,36 +111,51 @@ def load_series_from(path):
 #sinograms = [convert_sinogram(slice, spacing[0], spacing[1], spacing[2]) for slice in vol_zyx]
 
 class dicom_dataset(Dataset):
-    def __init__(self, data_path="data/Dataset", trajec_max_len=50, start_n=0, Interpolate = False,
-                 detector_count=1024, angle_step=(360/ 1024)):
-        print("also here ")
+    def __init__(self, data_path="data/Dataset", 
+                 detector_count=816, 
+                 angle_step=(360/720),
+                 cache_dir="data/sino_cache"):
+        
+        self.cache_dir = cache_dir
+        os.makedirs(cache_dir, exist_ok=True)
+        self.index_map = []  # list of cache file paths
+        
         total_series = load_series_from(data_path)
         
-        # Convert all slices to sinograms
-        self.sinograms = []
-        print("here")
-        for series in total_series:
+        for s_idx, series in enumerate(total_series):
             vol_zyx, spacing = series
-            if Interpolate:
-                vol_zyx = vol_zyx[:1]
             for ind in range(len(vol_zyx)):
-                sino = convert_sinogram(vol_zyx[ind], spacing[0], spacing[1], spacing[2],detector_count, angle_step)
-                # Normalize to [-1, 1]
-                sino_min, sino_max = sino.min(), sino.max()
-                if sino_max > sino_min:
-                    sino = 2.0 * (sino - sino_min) / (sino_max - sino_min) - 1.0
-                self.sinograms.append(sino)
-            if Interpolate:
-                break
-        # Stack to [num_sinograms, H, W] then add two dimensions -> [num_sinograms, 1, 1, H, W]
-	
-        self.sinograms_torch = torch.from_numpy(np.stack(self.sinograms, axis=0)).unsqueeze(1).unsqueeze(1)
+                
+                cache_path = os.path.join(
+                    cache_dir, 
+                    f"sino_s{s_idx}_i{ind}_d{detector_count}_a{angle_step:.4f}.npy"
+                )
+                
+                # Only compute if not already cached
+                if not os.path.exists(cache_path):
+                    sino = convert_sinogram(
+                        vol_zyx[ind], 
+                        spacing[0], spacing[1], spacing[2],
+                        detector_count, angle_step
+                    )
+                    sino_min, sino_max = sino.min(), sino.max()
+                    if sino_max > sino_min:
+                        sino = 2.0 * (sino - sino_min) / (sino_max - sino_min) - 1.0
+                    np.save(cache_path, sino.astype(np.float32))
+                    print(f"Cached {cache_path}")
+                
+                self.index_map.append(cache_path)
+        
+        print(f"Dataset ready: {len(self.index_map)} sinograms")
 
     def __len__(self):
-        return len(self.sinograms)
-            
+        return len(self.index_map)
+
     def __getitem__(self, index):
-        return self.sinograms_torch[index]
+        # Load single sinogram on demand — fast numpy load
+        sino = np.load(self.index_map[index])                          # [H, W]
+        sino = torch.from_numpy(sino).float().unsqueeze(0).unsqueeze(0) # [1, 1, H, W]
+        return sino
     
 
 

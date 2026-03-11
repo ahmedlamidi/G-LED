@@ -8,4 +8,6 @@
 /data/test_data
 validation/loss_plotter.py
 /ground_truth
-*.pyc*
+*.pyc
+__pycache__/
+/data/sino_cache
