@@ -98,7 +98,8 @@ class ElucidatedImagen(nn.Module):
             only_train_unet_number=None,
             lowres_noise_schedule='linear',
             num_sample_steps=32,  # number of sampling steps
-con
+            sigma_min=0.002,  # minimum noise level
+            sigma_max=80,  # maximum noise level
             sigma_data=0.5,  # standard deviation of data distribution
             rho=7,  # controls the sampling schedule
             P_mean=-1.2,  # mean of log-normal distribution from which noise is drawn for training

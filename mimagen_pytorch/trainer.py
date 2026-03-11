@@ -241,7 +241,7 @@ class ImagenTrainer(nn.Module):
         cosine_decay_max_steps = None,
         only_train_unet_number = None,
         fp16 = False,
-        precision = None,
+        precision = "bf16",
         split_batches = True,
         dl_tuple_output_keywords_names = ('images', 'text_embeds', 'text_masks', 'cond_images'),
         verbose = True,

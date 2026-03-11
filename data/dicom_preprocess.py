@@ -132,15 +132,16 @@ class dicom_dataset(Dataset):
                 self.sinograms.append(sino)
             if Interpolate:
                 break
-        # Stack to [num_sinograms, H, W] then add two dimensions -> [num_sinograms, 1, 1, H, W]
-	
-        self.sinograms_torch = torch.from_numpy(np.stack(self.sinograms, axis=0)).unsqueeze(1).unsqueeze(1)
+        # Stack to [num_sinograms, H, W] — keep as numpy to save memory
+        self.sinograms_np = np.stack(self.sinograms, axis=0).astype(np.float32)
+        del self.sinograms  # free the list
 
     def __len__(self):
-        return len(self.sinograms)
+        return self.sinograms_np.shape[0]
             
     def __getitem__(self, index):
-        return self.sinograms_torch[index]
+        # Convert to tensor lazily: [H, W] -> [1, 1, H, W]
+        return torch.from_numpy(self.sinograms_np[index]).unsqueeze(0).unsqueeze(0)
     
 
 
@@ -237,7 +238,7 @@ if __name__ == '__main__':
 	print("Saving first 20 sinograms as batch files...")
 	for i in range(min(100, len(dset))):
 		# Get sinogram and squeeze to [H, W]
-		sino_np = dset.sinograms_torch[i].squeeze().numpy()
+		sino_np = dset.sinograms_np[i]
 		
 		# Save as batchX.npy
 		filename = f"batch{i}.npy"
