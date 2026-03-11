@@ -33,7 +33,7 @@ def train_diff(diff_args,
 								     	 mode=seq_args.coarse_mode)
 		up_sampler   = torch.nn.Upsample(size=[720, 448], 
 								     	 mode=seq_args.coarse_mode)
-		model, loss = train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler)
+		model, loss = train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler, epoch=epoch, total_epochs=diff_args.epoch_num)
 		if epoch % 1 ==0 and epoch > 0:
 			peep = 0
 			#save_loss(diff_args, loss_list+[loss],epoch)
@@ -61,9 +61,9 @@ def train_diff(diff_args,
 		print("finish training epoch {}".format(epoch))
 
 
-def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler):
+def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler, epoch=0, total_epochs=1):
 	loss_epoch = []
-	print('Iteration is ', len(data_loader))
+	print(f'Iteration is {len(data_loader)}')
 	for iteration, batch in tqdm(enumerate(data_loader)):
 		#batch = batch.to(diff_args.device).float()
 		bsize = batch.shape[0]
@@ -82,14 +82,14 @@ def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler
 		# batch_cond = batch[..., :cond_width]           # First 50%
 		# batch = batch[..., (W - target_width):]        # Last 53%
 		
-		batch_cond = batch[..., 0::4, :]  # Every 4th level (0, 4, 8, ...) - known
-		# Create mask for label indices (1, 2, 3, 5, 6, 7, 9, 10, 11, ...)
-		H = batch.shape[-2]
-		label_indices = []
-		for i in range(H):
-			if i % 4 != 0:  # Not condition indices (0, 4, 8, ...)
-				label_indices.append(i)
-		batch = batch[..., label_indices, :]  # 3 out of every 4 levels - to predict
+		# First half: every 4th from offset 0; second half: every 4th from offset 2
+		# This ensures each cond angle's conjugate (i+360) is in the label set
+		half = H // 2
+		cond_indices = [i for i in range(0, half, 4)] + [i for i in range(half + 2, H, 4)]
+		cond_set = set(cond_indices)
+		label_indices = [i for i in range(H) if i not in cond_set]
+		batch_cond = batch[..., cond_indices, :]
+		batch = batch[..., label_indices, :]  # Remaining levels - to predict
 		# Pad height to divisible by 16
 		def pad_width_to_16(tensor):
 			# tensor shape: [B, T, C, H, W]
