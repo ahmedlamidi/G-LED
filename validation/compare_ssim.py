@@ -5,13 +5,13 @@ from skimage.metrics import peak_signal_noise_ratio as psnr
 import os
 
 # Base folder containing all batch folders (generated outputs)
-base_folder = 'output/mar_3_720_820_horizontal_step/diffusion_folder/experiment_final_checkpoint_150/contour'
+base_folder = 'output/mar_8_horizontal_step_4/diffusion_folder/experiment_final_checkpoint_150/contour'
 
 # Ground truth folder
 ground_truth_folder = 'ground_truth'
 
 # Output folder for comparison images
-comparison_output_folder = 'output/mar_3_720_820_horizontal_step/diffusion_folder/experiment_final_checkpoint_150/comparisons'
+comparison_output_folder = 'output/mar_8_horizontal_step_4/diffusion_folder/experiment_final_checkpoint_150/comparisons'
 os.makedirs(comparison_output_folder, exist_ok=True)
 
 # Get all batch folders and sort them
@@ -60,9 +60,12 @@ for batch_name in batch_folders:
         elif img_ground_truth.ndim == 3:
             img_ground_truth = img_ground_truth[0]
         
-        # Interleaved row split: even rows = condition (known), odd rows = target (to predict)
-        gt_cond   = img_ground_truth[0::2, :]  # even rows
-        gt_target = img_ground_truth[1::2, :]  # odd rows
+        # Every-4th-row split: 0::4 = condition (known), rest = target (to predict)
+        H_gt = img_ground_truth.shape[0]
+        cond_indices = [i for i in range(H_gt) if i % 4 == 0]
+        label_indices = [i for i in range(H_gt) if i % 4 != 0]
+        gt_cond   = img_ground_truth[cond_indices, :]
+        gt_target = img_ground_truth[label_indices, :]
 
         # Crop height padding from generated outputs to match GT dimensions
         img_generated = img_generated[:gt_target.shape[0], :]
@@ -88,11 +91,13 @@ for batch_name in batch_folders:
         # Calculate PSNR between generated odd rows and GT odd rows
         psnr_value = psnr(gt_target_norm, img_gen_norm, data_range=1.0)
         
-        # Reconstruct full images by interleaving even/odd rows
+        # Reconstruct full image by placing condition and label rows back
         full_H, full_W = img_ground_truth.shape
         recon_full = np.zeros((full_H, full_W))
-        recon_full[0::2, :] = img_cond_norm
-        recon_full[1::2, :] = img_gen_norm
+        for idx, row in zip(cond_indices, range(len(cond_indices))):
+            recon_full[idx, :] = img_cond_norm[row]
+        for idx, row in zip(label_indices, range(len(label_indices))):
+            recon_full[idx, :] = img_gen_norm[row]
         gt_full = normalize(img_ground_truth)
         
         # Create 2x2 figure: top row = full images, bottom row = condition / generated separately
@@ -105,17 +110,17 @@ for batch_name in batch_folders:
 
         # Top-right: Reconstructed full image (condition + generated interleaved)
         axes[0, 1].imshow(recon_full, cmap='gray')
-        axes[0, 1].set_title('Condition + Generated (Interleaved)')
+        axes[0, 1].set_title('Condition + Generated (1/4 split)')
         axes[0, 1].axis('off')
 
         # Bottom-left: Condition only (even rows)
         axes[1, 0].imshow(img_cond_norm, cmap='gray')
-        axes[1, 0].set_title('Condition (Even Rows)')
+        axes[1, 0].set_title('Condition (Every 4th Row)')
         axes[1, 0].axis('off')
 
         # Bottom-right: Generated only (odd rows)
         axes[1, 1].imshow(img_gen_norm, cmap='gray')
-        axes[1, 1].set_title('Generated (Odd Rows)')
+        axes[1, 1].set_title('Generated (3/4 Rows)')
         axes[1, 1].axis('off')
 
         # Set SSIM and PSNR as the main title
