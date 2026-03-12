@@ -28,7 +28,7 @@ class Args_final_eval:
 		for finding the dynamics dir
 		"""
 		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/mar_3_720_820_horizontal_step',
+								 default='output/mar_11_horizontal_PIML_3',
 								 help='all the information of bfs training')
 		
 		"""
@@ -107,11 +107,11 @@ if __name__ == '__main__':
 	"""
 	Fetch dataset
 	"""
-	data_set = dicom_dataset(Interpolate=True, data_path="data/test_data", detector_count=816, angle_step=(360/720))
+	data_set = dicom_dataset(data_path="data/test_data", detector_count=816, angle_step=(360/720))
 	
 	data_loader = DataLoader(dataset=data_set, 
 							 shuffle=False,
-							 batch_size=4)
+							 batch_size=1)
 
 	
 	
@@ -129,7 +129,7 @@ if __name__ == '__main__':
 				   cond_images_channels=1, 
 				   memory_efficient=True, 
 				   dim_mults=(1, 2,4,8)).to(torch.device(args_diff.device))  #mid: mid channel
-	image_sizes = (368)
+	image_sizes = (592)
 	image_width = (816) 
 	imagen = ElucidatedImagen(
             unets = (unet1),

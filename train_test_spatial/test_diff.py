@@ -73,8 +73,11 @@ def test_final(args_final,
                         num_velocity = batch.shape[2] if batch.ndim == 5 else 1  # Get actual channels from data
                         print(f"num_time: {num_time}, num_velocity: {num_velocity}")
                         H, W = batch.shape[-2], batch.shape[-1]
-                        batch_cond = batch[..., 0::2, :]  # Every other level (even rows) - known
-                        batch      = batch[..., 1::2, :]  # Interleaved missing levels (odd rows) - to predict
+                        cutoff = int(H * 0.75)
+                        batch_cond_indices = [i for i in range(H) if i % 4 == 0 and i < cutoff]
+                        label_indices = [i for i in range(H) if not (i % 4 == 0 and i < cutoff)]
+                        batch_cond = batch[..., batch_cond_indices, :]  # Every 4th row in first 75% - known
+                        batch      = batch[..., label_indices, :]  # Everything else - to predict
                         def pad_width_to_16(tensor):
                                 # tensor shape: [B, T, C, H, W]
                                 h = tensor.shape[-2]
