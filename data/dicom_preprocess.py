@@ -114,10 +114,12 @@ class dicom_dataset(Dataset):
     def __init__(self, data_path="data/Dataset", 
                  detector_count=816, 
                  angle_step=(360/720),
-                 cache_dir="data/sino_cache"):
+                 cache_dir="data/sino_cache", Interpolate = False):
         
         self.cache_dir = cache_dir
-        os.makedirs(cache_dir, exist_ok=True)
+        if "test_data" in data_path:
+            self.cache_dir = cache_dir + "_test"
+        os.makedirs(self.cache_dir, exist_ok=True)
         self.index_map = []  # list of cache file paths
         
         total_series = load_series_from(data_path)
@@ -127,7 +129,7 @@ class dicom_dataset(Dataset):
             for ind in range(len(vol_zyx)):
                 
                 cache_path = os.path.join(
-                    cache_dir, 
+                    self.cache_dir, 
                     f"sino_s{s_idx}_i{ind}_d{detector_count}_a{angle_step:.4f}.npy"
                 )
                 
@@ -145,6 +147,9 @@ class dicom_dataset(Dataset):
                     print(f"Cached {cache_path}")
                 
                 self.index_map.append(cache_path)
+        
+        if Interpolate:
+            self.index_map = self.index_map[:100]
         
         print(f"Dataset ready: {len(self.index_map)} sinograms")
 

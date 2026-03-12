@@ -28,7 +28,7 @@ class Args_final_eval:
 		for finding the dynamics dir
 		"""
 		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/mar_8_horizontal_step_8',
+								 default='output/mar_3_720_820_horizontal_step',
 								 help='all the information of bfs training')
 		
 		"""
@@ -111,7 +111,7 @@ if __name__ == '__main__':
 	
 	data_loader = DataLoader(dataset=data_set, 
 							 shuffle=False,
-							 batch_size=4)
+							 batch_size=1)
 
 	
 	
@@ -129,7 +129,7 @@ if __name__ == '__main__':
 				   cond_images_channels=1, 
 				   memory_efficient=True, 
 				   dim_mults=(1, 2,4,8)).to(torch.device(args_diff.device))  #mid: mid channel
-	image_sizes = (640)
+	image_sizes = (368)
 	image_width = (816) 
 	imagen = ElucidatedImagen(
             unets = (unet1),
