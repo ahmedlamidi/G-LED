@@ -5,20 +5,21 @@ from skimage.metrics import peak_signal_noise_ratio as psnr
 import os
 
 # Base folder containing all batch folders (generated outputs)
-base_folder = 'output/mar_3_720_820_horizontal_step/diffusion_folder/experiment_final_checkpoint_150/contour'
+base_folder = 'output/mar_11_Assymetric/diffusion_folder/experiment_final_checkpoint_150/contour'
 
 # Ground truth folder
 ground_truth_folder = 'ground_truth'
 
 # Output folder for comparison images
-comparison_output_folder = 'output/mar_3_720_820_horizontal_step/diffusion_folder/experiment_final_checkpoint_150/comparisons'
+comparison_output_folder = 'output/mar_11_Assymetric/diffusion_folder/experiment_final_checkpoint_150/comparisons'
 os.makedirs(comparison_output_folder, exist_ok=True)
 
 # Get all batch folders and sort them
 batch_folders = [f for f in os.listdir(base_folder) if f.startswith('batch') and os.path.isdir(os.path.join(base_folder, f))]
 batch_folders.sort(key=lambda x: int(x.replace('batch', '')))
+batch_folders = batch_folders[:20]  # Only process first 20 batches
 
-print(f"Found {len(batch_folders)} batch folders")
+print(f"Processing {len(batch_folders)} batch folders")
 
 # Collect metrics for saving
 metrics_list = []
@@ -115,14 +116,14 @@ for batch_name in batch_folders:
         axes[0, 1].set_title('Condition + Generated (Asymmetric)')
         axes[0, 1].axis('off')
 
-        # Bottom-left: Condition only (even rows)
+        # Bottom-left: Condition only (asymmetric rows)
         axes[1, 0].imshow(img_cond_norm, cmap='gray')
-        axes[1, 0].set_title('Condition (Even Rows)')
+        axes[1, 0].set_title('Condition (Asymmetric Rows)')
         axes[1, 0].axis('off')
 
-        # Bottom-right: Generated only (odd rows)
+        # Bottom-right: Generated only (asymmetric rows)
         axes[1, 1].imshow(img_gen_norm, cmap='gray')
-        axes[1, 1].set_title('Generated (Odd Rows)')
+        axes[1, 1].set_title('Generated (Asymmetric Rows)')
         axes[1, 1].axis('off')
 
         # Set SSIM and PSNR as the main title
