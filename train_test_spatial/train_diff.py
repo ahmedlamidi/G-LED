@@ -61,56 +61,45 @@ def train_diff(diff_args,
 		print("finish training epoch {}".format(epoch))
 
 
+def pad_width_to_16(tensor):
+	# tensor shape: [B, T, C, H, W]
+	h = tensor.shape[-2]
+	pad_h = (16 - h % 16) % 16
+	if pad_h > 0:
+		B, T, C, H_orig, W = tensor.shape
+		tensor = tensor.reshape(B * T, C, H_orig, W)
+		tensor = F.pad(tensor, (0, 0, 0, pad_h), mode='reflect')
+		tensor = tensor.reshape(B, T, C, H_orig + pad_h, W)
+	return tensor
+
+
 def train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler):
 	loss_epoch = []
 	print('Iteration is ', len(data_loader))
+	device = torch.device(diff_args.device)
+
+	# Precompute label indices once (constant across iterations)
+	_label_indices = None
+
 	for iteration, batch in tqdm(enumerate(data_loader)):
-		#batch = batch.to(diff_args.device).float()
 		bsize = batch.shape[0]
 		ntime = batch.shape[1]
-  
-		
-		# Reshape batch to [B*T, C, H, W] then back to [B, T, C, H, W]
-                # batch comes as [B, T, 1, 1400, 1000] from dataset
-                # batch = batch.reshape([bsize*ntime, num_velocity, 1440, 1000])
-                # batch = batch.reshape([bsize, ntime, num_velocity, 1440, 1000])
-		
-                # Use 50% condition / 53% target split with padding to divisible by 16
-                # batch shape: [B, T, C, H, W] = [B, T, 1, 720, 820]
-		H, W = batch.shape[-2], batch.shape[-1]
-		
-		# batch_cond = batch[..., :cond_width]           # First 50%
-		# batch = batch[..., (W - target_width):]        # Last 53%
-		
-		batch_cond = batch[..., 0::4, :]  # Every 4th level (0, 4, 8, ...) - known
-		# Create mask for label indices (1, 2, 3, 5, 6, 7, 9, 10, 11, ...)
-		H = batch.shape[-2]
-		label_indices = []
-		for i in range(H):
-			if i % 4 != 0:  # Not condition indices (0, 4, 8, ...)
-				label_indices.append(i)
-		batch = batch[..., label_indices, :]  # 3 out of every 4 levels - to predict
-		# Pad height to divisible by 16
-		def pad_width_to_16(tensor):
-			# tensor shape: [B, T, C, H, W]
-			h = tensor.shape[-2]
-			pad_h = (16 - h % 16) % 16
-			if pad_h > 0:
-				# Reshape to 4D for padding (F.pad reflect doesn't support 5D)
-				B, T, C, H_orig, W = tensor.shape
-				tensor = tensor.reshape(B * T, C, H_orig, W)
-				# For 4D tensor: (left, right, top, bottom)
-				tensor = F.pad(tensor, (0, 0, 0, pad_h), mode='reflect')
-				tensor = tensor.reshape(B, T, C, H_orig + pad_h, W)
-			return tensor
-		
-		batch_cond = pad_width_to_16(batch_cond)
-		batch = pad_width_to_16(batch)            
 
-		#need # B x F x T x H x W
-		batch= batch.permute([0,2,1,3,4])
-		batch_cond = batch_cond.permute([0,2,1,3,4])
-		#print(batch.device)
+		batch_cond = batch[..., 0::4, :]  # Every 4th level - known
+
+		# Build label_indices once on first iteration (depends on H)
+		if _label_indices is None:
+			H = batch.shape[-2]
+			_label_indices = [i for i in range(H) if i % 4 != 0]
+		batch = batch[..., _label_indices, :]  # 3 out of every 4 levels - to predict
+
+		batch_cond = pad_width_to_16(batch_cond)
+		batch = pad_width_to_16(batch)
+
+		# B x F x T x H x W
+		batch = batch.permute([0,2,1,3,4]).to(device, non_blocking=True)
+		batch_cond = batch_cond.permute([0,2,1,3,4]).to(device, non_blocking=True)
+
 		loss=trainer(batch,cond_images=batch_cond,unet_number=1,ignore_time=False)
 		trainer.update(unet_number=1)
 		loss_epoch.append(loss)

@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torch.utils.data import random_split, DataLoader
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 import pdb
 import pytorch_warmup as warmup
 
@@ -348,7 +348,7 @@ class ImagenTrainer(nn.Module):
             if self.use_ema:
                 self.ema_unets.append(EMA(unet, **ema_kwargs))
 
-            scaler = GradScaler(enabled = grad_scaler_enabled)
+            scaler = GradScaler('cuda', enabled = grad_scaler_enabled)
 
             scheduler = warmup_scheduler = None
 
@@ -985,7 +985,7 @@ class ImagenTrainer(nn.Module):
 
         assert not exists(self.only_train_unet_number) or self.only_train_unet_number == unet_number, f'you can only train unet #{self.only_train_unet_number}'
 
-        total_loss = 0.
+        total_loss = torch.tensor(0., device=self.mydevice)
         #print(args[0].device)
         for chunk_size_frac, (chunked_args, chunked_kwargs) in split_args_and_kwargs(*args, split_size = max_batch_size, **kwargs):
             with self.accelerator.autocast():
@@ -993,9 +993,9 @@ class ImagenTrainer(nn.Module):
                 loss = self.imagen(*chunked_args, unet = self.unet_being_trained, unet_number = unet_number, **chunked_kwargs)
                 loss = loss * chunk_size_frac
 
-            total_loss += loss.item()
+            total_loss = total_loss + loss.detach()
 
             if self.training:
                 self.accelerator.backward(loss)
 
-        return total_loss
+        return total_loss.item()

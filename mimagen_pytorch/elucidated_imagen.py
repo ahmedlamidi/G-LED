@@ -151,7 +151,7 @@ class ElucidatedImagen(nn.Module):
         self.unet_being_trained_index = -1  # keeps track of which unet is being trained at the moment
 
         for ind, one_unet in enumerate(unets):
-            assert isinstance(one_unet, (Unet, Unet3D, NullUnet))
+            # assert isinstance(one_unet, (Unet, Unet3D, NullUnet))
             is_first = ind == 0
 
             one_unet = one_unet.cast_model_parameters(

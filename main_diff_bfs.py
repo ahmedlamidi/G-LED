@@ -95,17 +95,20 @@ if __name__ == '__main__':
 	data_set = dicom_dataset(detector_count=816, angle_step=(360/720))
 	#1327
  
-	data_loader = DataLoader(dataset=data_set, 
+	data_loader = DataLoader(dataset=data_set,
 							 shuffle=diff_args.shuffle,
-							 batch_size=8)
+							 batch_size=16,
+							 num_workers=4,
+							 pin_memory=True,
+							 persistent_workers=True)
 	
 	"""
 	Create diffusion model
 	"""
 	unet1 = Unet3D(dim=diff_args.unet_dim,
-				   cond_images_channels=1, 
-				   memory_efficient=True, 
-				   dim_mults=(1, 2, 4, 8)).to(torch.device(diff_args.device))  #mid: mid channel (removed 8 to save memory)
+				   cond_images_channels=1,
+				   memory_efficient=True,
+				   dim_mults=(1, 2, 4, 8)).to(torch.device(diff_args.device))
 	image_sizes = (544)  # Reduced from 1400
 	image_width = (816)  # Reduced from 1000
 	imagen = ElucidatedImagen(
@@ -129,7 +132,7 @@ if __name__ == '__main__':
 		condition_on_text = False,
 		auto_normalize_img = False  # Han Gao make it false
 		).to(torch.device(diff_args.device))
-	trainer = ImagenTrainer(imagen, fp16=True, device=torch.device(diff_args.device))
+	trainer = ImagenTrainer(imagen, precision='bf16', device=torch.device(diff_args.device))
 	
 	# Resume from checkpoint if specified
 	if diff_args.resume:
