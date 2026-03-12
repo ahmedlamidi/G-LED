@@ -28,7 +28,7 @@ class Args_final_eval:
 		for finding the dynamics dir
 		"""
 		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/mar_3_720_820_horizontal_step',
+								 default='output/mar_8_horizontal_step_2',
 								 help='all the information of bfs training')
 		
 		"""
@@ -107,11 +107,11 @@ if __name__ == '__main__':
 	"""
 	Fetch dataset
 	"""
-	data_set = dicom_dataset(Interpolate=True, data_path="data/test_data", detector_count=816, angle_step=(360/720))
+	data_set = dicom_dataset(data_path="data/test_data", detector_count=816, angle_step=(360/720))
 	
 	data_loader = DataLoader(dataset=data_set, 
 							 shuffle=False,
-							 batch_size=4)
+							 batch_size=1)
 
 	
 	

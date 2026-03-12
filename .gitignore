@@ -9,3 +9,4 @@
 validation/loss_plotter.py
 /ground_truth
 /data/sino_cache
+/data/sino_cache_test
