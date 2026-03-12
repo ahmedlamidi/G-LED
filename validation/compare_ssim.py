@@ -60,9 +60,10 @@ for batch_name in batch_folders:
         elif img_ground_truth.ndim == 3:
             img_ground_truth = img_ground_truth[0]
         
-        # Interleaved row split: even rows = condition (known), odd rows = target (to predict)
-        gt_cond   = img_ground_truth[0::2, :]  # even rows
-        gt_target = img_ground_truth[1::2, :]  # odd rows
+        # 1-out-of-8 split: every 8th row = condition (known), rest = target (to predict)
+        gt_cond   = img_ground_truth[0::8, :]  # every 8th row
+        label_indices = [i for i in range(img_ground_truth.shape[0]) if i % 8 != 0]
+        gt_target = img_ground_truth[label_indices, :]  # 7 out of every 8 rows
 
         # Crop height padding from generated outputs to match GT dimensions
         img_generated = img_generated[:gt_target.shape[0], :]
@@ -88,11 +89,12 @@ for batch_name in batch_folders:
         # Calculate PSNR between generated odd rows and GT odd rows
         psnr_value = psnr(gt_target_norm, img_gen_norm, data_range=1.0)
         
-        # Reconstruct full images by interleaving even/odd rows
+        # Reconstruct full images by placing condition and generated rows back
         full_H, full_W = img_ground_truth.shape
         recon_full = np.zeros((full_H, full_W))
-        recon_full[0::2, :] = img_cond_norm
-        recon_full[1::2, :] = img_gen_norm
+        recon_full[0::8, :] = img_cond_norm
+        label_indices_full = [i for i in range(full_H) if i % 8 != 0]
+        recon_full[label_indices_full, :] = img_gen_norm
         gt_full = normalize(img_ground_truth)
         
         # Create 2x2 figure: top row = full images, bottom row = condition / generated separately
@@ -105,17 +107,17 @@ for batch_name in batch_folders:
 
         # Top-right: Reconstructed full image (condition + generated interleaved)
         axes[0, 1].imshow(recon_full, cmap='gray')
-        axes[0, 1].set_title('Condition + Generated (Interleaved)')
+        axes[0, 1].set_title('Condition + Generated (1/8 split)')
         axes[0, 1].axis('off')
 
         # Bottom-left: Condition only (even rows)
         axes[1, 0].imshow(img_cond_norm, cmap='gray')
-        axes[1, 0].set_title('Condition (Even Rows)')
+        axes[1, 0].set_title('Condition (Every 8th Row)')
         axes[1, 0].axis('off')
 
         # Bottom-right: Generated only (odd rows)
         axes[1, 1].imshow(img_gen_norm, cmap='gray')
-        axes[1, 1].set_title('Generated (Odd Rows)')
+        axes[1, 1].set_title('Generated (7/8 Rows)')
         axes[1, 1].axis('off')
 
         # Set SSIM and PSNR as the main title
