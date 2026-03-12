@@ -108,7 +108,7 @@ class ElucidatedImagen(nn.Module):
             S_tmin=0.05,
             S_tmax=50,
             S_noise=1.003,
-            physics_loss_weight=0.01,  # weight for physics-informed loss: p(s, θ) = p(-s, θ + 180°)
+            physics_loss_weight=1.0,  # weight for physics-informed loss: p(s, θ) = p(-s, θ + 180°)
     ):
         super().__init__()
 

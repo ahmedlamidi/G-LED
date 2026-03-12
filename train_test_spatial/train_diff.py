@@ -134,6 +134,7 @@ def train_epoch(diff_args, seq_args, trainer, data_loader, down_sampler, up_samp
             original_cond_h=original_cond_h,
             total_angles=H
         )
+        trainer.update(unet_number=1)
 
         # Properly unpack tuple
         if isinstance(result, tuple):
