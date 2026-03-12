@@ -107,7 +107,7 @@ if __name__ == '__main__':
 	"""
 	Fetch dataset
 	"""
-	data_set = dicom_dataset(Interpolate=True, data_path="data/test_data", detector_count=816, angle_step=(360/720))
+	data_set = dicom_dataset(data_path="data/test_data", detector_count=816, angle_step=(360/720))
 	
 	data_loader = DataLoader(dataset=data_set, 
 							 shuffle=False,
