@@ -97,7 +97,7 @@ if __name__ == '__main__':
  
 	data_loader = DataLoader(dataset=data_set, 
 							 shuffle=diff_args.shuffle,
-							 batch_size=1)
+							 batch_size=8)
 	
 	"""
 	Create diffusion model
@@ -129,7 +129,7 @@ if __name__ == '__main__':
 		condition_on_text = False,
 		auto_normalize_img = False  # Han Gao make it false
 		).to(torch.device(diff_args.device))
-	trainer = ImagenTrainer(imagen, device =torch.device(diff_args.device))
+	trainer = ImagenTrainer(imagen, fp16=True, device=torch.device(diff_args.device))
 	
 	# Resume from checkpoint if specified
 	if diff_args.resume:

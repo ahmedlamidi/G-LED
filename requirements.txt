@@ -12,5 +12,5 @@ ema_pytorch
 accelerate
 pydantic
 imagen_pytorch
-torch==2.1.2
+torch
 astra-toolbox
