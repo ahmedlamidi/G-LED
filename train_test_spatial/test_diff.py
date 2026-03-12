@@ -73,8 +73,12 @@ def test_final(args_final,
                         num_velocity = batch.shape[2] if batch.ndim == 5 else 1  # Get actual channels from data
                         print(f"num_time: {num_time}, num_velocity: {num_velocity}")
                         H, W = batch.shape[-2], batch.shape[-1]
-                        batch_cond = batch[..., 0::2, :]  # Every other level (even rows) - known
-                        batch      = batch[..., 1::2, :]  # Interleaved missing levels (odd rows) - to predict
+                        half = H // 2
+                        cond_indices = [i for i in range(0, half, 4)] + [i for i in range(half + 2, H, 4)]
+                        cond_set = set(cond_indices)
+                        label_indices = [i for i in range(H) if i not in cond_set]
+                        batch_cond = batch[..., cond_indices, :]  # Asymmetric conjugate condition
+                        batch      = batch[..., label_indices, :]  # Remaining levels - to predict
                         def pad_width_to_16(tensor):
                                 # tensor shape: [B, T, C, H, W]
                                 h = tensor.shape[-2]
