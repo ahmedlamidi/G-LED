@@ -154,18 +154,11 @@ if __name__ == '__main__':
             ).to(torch.device(args_final.device))
 	trainer = ImagenTrainer(imagen, device =torch.device(args_final.device))
 	trainer.load(path=args_diff.model_save_path+'/best_model_sofar')
-	test_final_overall(args_final, 
-					   args_seq, 
-					   args_diff, 
-					   trainer, 
+	test_final_overall(args_final,
+					   args_seq,
+					   args_diff,
+					   trainer,
 					   None,
-					   data_loader)
-	exit()
-	test_final_overall(args_final, 
-					   args_seq, 
-					   args_diff, 
-					   trainer, 
-					   model,
 					   data_loader)
 
 
