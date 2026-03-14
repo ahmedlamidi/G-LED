@@ -5,13 +5,13 @@ from skimage.metrics import peak_signal_noise_ratio as psnr
 import os
 
 # Base folder containing all batch folders (generated outputs)
-base_folder = 'output/mar_3_720_820_horizontal_step/diffusion_folder/experiment_final_checkpoint_150/contour'
+base_folder = 'output/mar_8_horizontal_step_8/diffusion_folder/experiment_final_checkpoint_150/contour'
 
 # Ground truth folder
 ground_truth_folder = 'ground_truth'
 
 # Output folder for comparison images
-comparison_output_folder = 'output/mar_3_720_820_horizontal_step/diffusion_folder/experiment_final_checkpoint_150/comparisons'
+comparison_output_folder = 'output/mar_8_horizontal_step_8/diffusion_folder/experiment_final_checkpoint_150/comparisons'
 os.makedirs(comparison_output_folder, exist_ok=True)
 
 # Get all batch folders and sort them
@@ -22,11 +22,13 @@ print(f"Found {len(batch_folders)} batch folders")
 
 # Collect metrics for saving
 metrics_list = []
-
+count = 0 
 for batch_name in batch_folders:
     output_folder = os.path.join(base_folder, batch_name)
     batch_num = batch_name.replace('batch', '')
-    
+    count += 1
+    if count == 20:
+        break
     try:
         # Load the generated reconstruction
         img_generated = np.load(os.path.join(output_folder, 'recon_micro_0.npy'))
@@ -110,12 +112,12 @@ for batch_name in batch_folders:
         axes[0, 1].set_title('Condition + Generated (1/8 split)')
         axes[0, 1].axis('off')
 
-        # Bottom-left: Condition only (even rows)
+        # Bottom-left: Condition only (every 8th row)
         axes[1, 0].imshow(img_cond_norm, cmap='gray')
         axes[1, 0].set_title('Condition (Every 8th Row)')
         axes[1, 0].axis('off')
 
-        # Bottom-right: Generated only (odd rows)
+        # Bottom-right: Generated only (7/8 rows)
         axes[1, 1].imshow(img_gen_norm, cmap='gray')
         axes[1, 1].set_title('Generated (7/8 Rows)')
         axes[1, 1].axis('off')
