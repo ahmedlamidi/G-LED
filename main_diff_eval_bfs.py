@@ -153,7 +153,7 @@ if __name__ == '__main__':
             auto_normalize_img = False  # Han Gao make it false
             ).to(torch.device(args_final.device))
 	trainer = ImagenTrainer(imagen, device =torch.device(args_final.device))
-	trainer.load(path=args_diff.model_save_path+'/best_model_sofar')
+	trainer.load(path=args_diff.model_save_path+'/checkpoint_epoch_200')
 	test_final_overall(args_final,
 					   args_seq,
 					   args_diff,
