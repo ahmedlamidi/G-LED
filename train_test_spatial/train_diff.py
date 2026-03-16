@@ -135,13 +135,6 @@ def train_epoch(diff_args, seq_args, trainer, data_loader, down_sampler, up_samp
 
         loss_epoch.append(loss)
 
-        # Log every 50 iterations
-        if iteration % 50 == 0:
-            d = data_loss if isinstance(result, tuple) else loss
-            p = physics_loss if isinstance(result, tuple) else 0.0
-            ratio = p / (d + 1e-8)
-            print(f"  iter {iteration} | data: {d:.4f} | physics: {p:.6f} | ratio: {ratio:.4f}")
-
     avg_loss = sum(loss_epoch) / len(loss_epoch)
     avg_data = sum(data_loss_epoch) / len(data_loss_epoch) if data_loss_epoch else avg_loss
     avg_phys = sum(physics_loss_epoch) / len(physics_loss_epoch) if physics_loss_epoch else 0.0
