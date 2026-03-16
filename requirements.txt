@@ -15,4 +15,5 @@ imagen_pytorch
 torch
 astra-toolbox
 imageio
-
+wandb
+dotenv

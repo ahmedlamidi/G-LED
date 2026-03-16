@@ -12,3 +12,5 @@ validation/loss_plotter.py
 __pycache__/
 /data/sino_cache
 /data/sino_cache_test
+.env
+wandb/

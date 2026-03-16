@@ -7,6 +7,9 @@ from torch.utils.data import DataLoader
 import torch
 import numpy as np
 import json
+import wandb
+from dotenv import load_dotenv
+load_dotenv()
 
 
 """
@@ -30,7 +33,7 @@ class Args:
 		for finding the dynamics dir
 		"""
 		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/mar_11_horizontal_PIML_3',
+								 default='output/mar_11_horizontal_None',
 								 help='all the information of ks training')
 		"""
 		for diffusion model
@@ -48,7 +51,7 @@ class Args:
 		"""
 		for training 
 		"""
-		self.parser.add_argument("--batch_size", default = 8)
+		self.parser.add_argument("--batch_size", default = 16)
 		self.parser.add_argument("--epoch_num", default = 500)
 		self.parser.add_argument("--device", type=str, default = "cuda:0")
 		self.parser.add_argument("--shuffle",default=True)
@@ -97,8 +100,8 @@ if __name__ == '__main__':
  
 	data_loader = DataLoader(dataset=data_set, 
 							 shuffle=diff_args.shuffle,
-							 batch_size=4,
-							 num_workers=2,
+							 batch_size=8,
+							 num_workers=4,
 							 pin_memory=True)
 	
 	"""
@@ -131,7 +134,7 @@ if __name__ == '__main__':
 		condition_on_text = False,
 		auto_normalize_img = False  # Han Gao make it false
 		).to(torch.device(diff_args.device))
-	trainer = ImagenTrainer(imagen, device =torch.device(diff_args.device))
+	trainer = ImagenTrainer(imagen, device =torch.device(diff_args.device), fp16=True)
 	
 	# Resume from checkpoint if specified
 	if diff_args.resume:
@@ -145,7 +148,23 @@ if __name__ == '__main__':
 		else:
 			print(f"Warning: Checkpoint not found at {checkpoint_path}, starting fresh training")
 	
+	#wandb.login(key=os.environ.get("WANDB_API_KEY"))
+	wandb.init(
+		entity="ahmedlamidi-univerity-of-south-florida",
+		project="G-LED-diffusion-None-PIML",
+		config={
+			"batch_size": diff_args.batch_size,
+			"epoch_num": diff_args.epoch_num,
+			"unet_dim": diff_args.unet_dim,
+			"num_sample_steps": diff_args.num_sample_steps,
+			"device": diff_args.device,
+			"fp16": True,
+		},
+	)
+
 	train_diff(diff_args=diff_args,
                seq_args=seq_args,
                trainer=trainer,
                data_loader=data_loader)
+
+	wandb.finish()

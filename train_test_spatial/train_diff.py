@@ -3,6 +3,7 @@ import torch
 import sys
 import os
 import numpy as np
+import wandb
 sys.path.insert(0, './util')
 from utils import save_loss
 
@@ -54,6 +55,7 @@ def train_diff(diff_args,
 			np.savetxt(os.path.join(diff_args.model_save_path,
 								'best_model_sofar_epoch'),np.ones(2)*epoch)
 
+		wandb.log({"epoch": epoch, "loss": loss})
 		print(f"Epoch {epoch}: Loss={loss:.6f}")
 
 
