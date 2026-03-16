@@ -5,6 +5,7 @@ import pdb
 import sys
 import os
 import numpy as np
+import wandb
 sys.path.insert(0, './util')
 from utils import save_loss
 
@@ -83,6 +84,14 @@ def train_diff(diff_args,
 			np.savetxt(os.path.join(diff_args.model_save_path, 
 								'best_model_sofar_epoch'),np.ones(2)*epoch)
 		
+		# Log to wandb
+		wandb.log({
+			"epoch": epoch,
+			"total_loss": total_loss,
+			"data_loss": data_loss,
+			"physics_loss": physics_loss,
+		})
+
 		print(f"Epoch {epoch}: Total Loss={total_loss:.6f}, Data Loss={data_loss:.6f}, Physics Loss={physics_loss:.6f}")
 
 

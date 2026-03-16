@@ -7,6 +7,8 @@ from torch.utils.data import DataLoader
 import torch
 import numpy as np
 import json
+import wandb
+os.environ["WANDB_API_KEY"] = "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"
 
 
 """
@@ -95,9 +97,9 @@ if __name__ == '__main__':
 	data_set = dicom_dataset(detector_count=816, angle_step=(360/720))
 	#1327
  
-	data_loader = DataLoader(dataset=data_set, 
+	data_loader = DataLoader(dataset=data_set,
 							 shuffle=diff_args.shuffle,
-							 batch_size=4,
+							 batch_size=diff_args.batch_size,
 							 num_workers=2,
 							 pin_memory=True)
 	
@@ -131,7 +133,7 @@ if __name__ == '__main__':
 		condition_on_text = False,
 		auto_normalize_img = False  # Han Gao make it false
 		).to(torch.device(diff_args.device))
-	trainer = ImagenTrainer(imagen, device =torch.device(diff_args.device))
+	trainer = ImagenTrainer(imagen, device=torch.device(diff_args.device), fp16=True)
 	
 	# Resume from checkpoint if specified
 	if diff_args.resume:
@@ -145,6 +147,20 @@ if __name__ == '__main__':
 		else:
 			print(f"Warning: Checkpoint not found at {checkpoint_path}, starting fresh training")
 	
+	# Initialize wandb
+	wandb.init(
+		project="G-LED-diffusion-PIML-based",
+		config={
+			"batch_size": diff_args.batch_size,
+			"epoch_num": diff_args.epoch_num,
+			"unet_dim": diff_args.unet_dim,
+			"num_sample_steps": diff_args.num_sample_steps,
+			"Nt": diff_args.Nt,
+			"device": diff_args.device,
+			"fp16": True,
+		}
+	)
+
 	train_diff(diff_args=diff_args,
                seq_args=seq_args,
                trainer=trainer,

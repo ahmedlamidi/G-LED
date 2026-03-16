@@ -117,9 +117,7 @@ class dicom_dataset(Dataset):
                  cache_dir="data/sino_cache"):
         
         self.cache_dir = cache_dir
-        if "test_data" in data_path:
-            self.cache_dir = cache_dir + "_test"
-        os.makedirs(self.cache_dir, exist_ok=True)
+        os.makedirs(cache_dir, exist_ok=True)
         self.index_map = []  # list of cache file paths
         
         total_series = load_series_from(data_path)
@@ -129,7 +127,7 @@ class dicom_dataset(Dataset):
             for ind in range(len(vol_zyx)):
                 
                 cache_path = os.path.join(
-                    self.cache_dir, 
+                    cache_dir, 
                     f"sino_s{s_idx}_i{ind}_d{detector_count}_a{angle_step:.4f}.npy"
                 )
                 
