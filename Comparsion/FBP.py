@@ -5,9 +5,23 @@ import astra
 import matplotlib.pyplot as plt
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import peak_signal_noise_ratio as psnr
+import imageio.v3 as iio
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'data'))
 from dicom_preprocess import load_series_from, convert_hu_to_mu
+
+
+def convert_mu_to_hu(mu):
+    """Inverse of convert_hu_to_mu: HU = (mu / 0.02 - 1) * 1000."""
+    return (mu / 0.02 - 1.0) * 1000.0
+
+
+def hu_to_display(ct_slice):
+    """Convert HU image to [0, 255] uint8 for PNG saving (window: [-1024, 1000])."""
+    lo, hi = -1024.0, 1000.0
+    clipped = np.clip(ct_slice, lo, hi).astype(np.float32)
+    normalized = (clipped - lo) / (hi - lo)
+    return (normalized * 255.0 + 0.5).astype(np.uint8)
 
 
 def build_geometry(H, W, dx, dy, detector_count, angle_step):
@@ -60,7 +74,7 @@ def fbp_reconstruct(sinogram, vol_geom, proj_geom):
     return recon
 
 
-def build_sparse_geometry(vol_geom, full_angles, cond_indices, dx, detector_count):
+def build_sparse_geometry(full_angles, cond_indices, dx, detector_count):
     """Build ASTRA geometry using only the selected sparse angles."""
     DSO = 1000
     ODD = 600
@@ -71,39 +85,47 @@ def build_sparse_geometry(vol_geom, full_angles, cond_indices, dx, detector_coun
     return proj_geom
 
 
-def compare_slice(mu_slice, vol_geom, proj_geom_full, full_angles,
+def compare_slice(ct_slice_hu, mu_slice, vol_geom, proj_geom_full, full_angles,
                   cond_indices, dx, detector_count, save_dir, slice_idx):
-    """Compare full vs sparse FBP for a single slice."""
-    # Full sinogram and FBP
+    """Compare full vs sparse FBP for a single slice in sinogram, recon, and DICOM space."""
+    # Full sinogram and FBP (in mu space)
     sino_full = forward_project(mu_slice, vol_geom, proj_geom_full)
-    recon_full = fbp_reconstruct(sino_full, vol_geom, proj_geom_full)
+    recon_full_mu = fbp_reconstruct(sino_full, vol_geom, proj_geom_full)
 
     # Sparse sinogram (select only conditioned rows)
     sino_sparse = sino_full[cond_indices, :]
 
-    # Sparse FBP
+    # Sparse FBP (in mu space)
     proj_geom_sparse = build_sparse_geometry(
-        vol_geom, full_angles, cond_indices, dx, detector_count
+        full_angles, cond_indices, dx, detector_count
     )
-    recon_sparse = fbp_reconstruct(sino_sparse, vol_geom, proj_geom_sparse)
+    recon_sparse_mu = fbp_reconstruct(sino_sparse, vol_geom, proj_geom_sparse)
+
+    # Convert reconstructions to HU (DICOM space)
+    recon_full_hu = convert_mu_to_hu(recon_full_mu)
+    recon_sparse_hu = convert_mu_to_hu(recon_sparse_mu)
 
     # -- Sinogram metrics --
-    # Pad sparse sinogram back to full size for comparison (zeros for missing rows)
     sino_padded = np.zeros_like(sino_full)
     sino_padded[cond_indices, :] = sino_sparse
-    # Only compare on known rows for sinogram SSIM/PSNR (they're identical),
-    # so instead compare full vs padded to show information loss
     sino_data_range = sino_full.max() - sino_full.min()
     sino_ssim = ssim(sino_full, sino_padded, data_range=sino_data_range)
     sino_psnr = psnr(sino_full, sino_padded, data_range=sino_data_range)
 
-    # -- Reconstruction metrics --
-    recon_data_range = recon_full.max() - recon_full.min()
-    recon_ssim = ssim(recon_full, recon_sparse, data_range=recon_data_range)
-    recon_psnr = psnr(recon_full, recon_sparse, data_range=recon_data_range)
+    # -- Reconstruction metrics (mu space) --
+    recon_data_range = recon_full_mu.max() - recon_full_mu.min()
+    recon_ssim = ssim(recon_full_mu, recon_sparse_mu, data_range=recon_data_range)
+    recon_psnr = psnr(recon_full_mu, recon_sparse_mu, data_range=recon_data_range)
 
-    # -- Visualization --
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    # -- DICOM space metrics (HU): compare original CT slice vs FBP reconstructions --
+    hu_data_range = ct_slice_hu.max() - ct_slice_hu.min()
+    dicom_full_ssim = ssim(ct_slice_hu, recon_full_hu, data_range=hu_data_range)
+    dicom_full_psnr = psnr(ct_slice_hu, recon_full_hu, data_range=hu_data_range)
+    dicom_sparse_ssim = ssim(ct_slice_hu, recon_sparse_hu, data_range=hu_data_range)
+    dicom_sparse_psnr = psnr(ct_slice_hu, recon_sparse_hu, data_range=hu_data_range)
+
+    # -- Visualization (3 rows) --
+    fig, axes = plt.subplots(3, 3, figsize=(18, 15))
 
     # Row 1: Sinograms
     axes[0, 0].imshow(sino_full, cmap='gray', aspect='auto')
@@ -113,14 +135,23 @@ def compare_slice(mu_slice, vol_geom, proj_geom_full, full_angles,
     axes[0, 2].imshow(np.abs(sino_full - sino_padded), cmap='hot', aspect='auto')
     axes[0, 2].set_title(f'Sino Diff (SSIM={sino_ssim:.4f}, PSNR={sino_psnr:.2f})')
 
-    # Row 2: Reconstructions
-    vmin, vmax = recon_full.min(), recon_full.max()
-    axes[1, 0].imshow(recon_full, cmap='gray', vmin=vmin, vmax=vmax)
+    # Row 2: FBP Reconstructions (mu space)
+    vmin, vmax = recon_full_mu.min(), recon_full_mu.max()
+    axes[1, 0].imshow(recon_full_mu, cmap='gray', vmin=vmin, vmax=vmax)
     axes[1, 0].set_title('FBP Full (720 angles)')
-    axes[1, 1].imshow(recon_sparse, cmap='gray', vmin=vmin, vmax=vmax)
+    axes[1, 1].imshow(recon_sparse_mu, cmap='gray', vmin=vmin, vmax=vmax)
     axes[1, 1].set_title(f'FBP Sparse ({len(cond_indices)} angles)')
-    axes[1, 2].imshow(np.abs(recon_full - recon_sparse), cmap='hot')
+    axes[1, 2].imshow(np.abs(recon_full_mu - recon_sparse_mu), cmap='hot')
     axes[1, 2].set_title(f'Recon Diff (SSIM={recon_ssim:.4f}, PSNR={recon_psnr:.2f})')
+
+    # Row 3: DICOM space (HU) — original vs full FBP vs sparse FBP
+    hu_vmin, hu_vmax = -1024.0, 1000.0
+    axes[2, 0].imshow(ct_slice_hu, cmap='gray', vmin=hu_vmin, vmax=hu_vmax)
+    axes[2, 0].set_title('Original DICOM (HU)')
+    axes[2, 1].imshow(recon_full_hu, cmap='gray', vmin=hu_vmin, vmax=hu_vmax)
+    axes[2, 1].set_title(f'Full FBP→HU (SSIM={dicom_full_ssim:.4f})')
+    axes[2, 2].imshow(recon_sparse_hu, cmap='gray', vmin=hu_vmin, vmax=hu_vmax)
+    axes[2, 2].set_title(f'Sparse FBP→HU (SSIM={dicom_sparse_ssim:.4f})')
 
     for ax in axes.flat:
         ax.axis('off')
@@ -133,6 +164,8 @@ def compare_slice(mu_slice, vol_geom, proj_geom_full, full_angles,
     return {
         'sino_ssim': sino_ssim, 'sino_psnr': sino_psnr,
         'recon_ssim': recon_ssim, 'recon_psnr': recon_psnr,
+        'dicom_full_ssim': dicom_full_ssim, 'dicom_full_psnr': dicom_full_psnr,
+        'dicom_sparse_ssim': dicom_sparse_ssim, 'dicom_sparse_psnr': dicom_sparse_psnr,
     }
 
 
@@ -141,7 +174,9 @@ def main():
     detector_count = 816
     angle_step = 360 / 720
     save_dir = "Comparsion/results"
+    dicom_png_dir = "Comparsion/dicom_pngs"
     os.makedirs(save_dir, exist_ok=True)
+    os.makedirs(dicom_png_dir, exist_ok=True)
 
     # Same mask as train_diff: every 10th row in first 75%
     total_angles = 720
@@ -153,6 +188,7 @@ def main():
     # Load test data
     total_series = load_series_from(data_path)
     all_metrics = []
+    global_slice_idx = 0
 
     for s_idx, series in enumerate(total_series):
         vol_zyx, spacing = series
@@ -165,25 +201,36 @@ def main():
         )
 
         for ind in range(len(vol_zyx)):
-            slice_idx = sum(len(total_series[j][0]) for j in range(s_idx)) + ind
-            mu_slice = convert_hu_to_mu(vol_zyx[ind])
+            ct_slice_hu = vol_zyx[ind].astype(np.float32)
+            mu_slice = convert_hu_to_mu(ct_slice_hu)
+
+            # Save first 20 DICOM slices as PNGs
+            if global_slice_idx < 20:
+                png_path = os.path.join(dicom_png_dir, f'dicom_{global_slice_idx:03d}.png')
+                iio.imwrite(png_path, hu_to_display(ct_slice_hu))
+                print(f"Saved {png_path}")
 
             metrics = compare_slice(
-                mu_slice, vol_geom, proj_geom_full, full_angles,
-                cond_indices, dx, detector_count, save_dir, slice_idx
+                ct_slice_hu, mu_slice, vol_geom, proj_geom_full, full_angles,
+                cond_indices, dx, detector_count, save_dir, global_slice_idx
             )
             all_metrics.append(metrics)
 
-            print(f"Slice {slice_idx}: "
+            print(f"Slice {global_slice_idx}: "
                   f"Sino SSIM={metrics['sino_ssim']:.4f} PSNR={metrics['sino_psnr']:.2f} | "
-                  f"Recon SSIM={metrics['recon_ssim']:.4f} PSNR={metrics['recon_psnr']:.2f}")
+                  f"Recon SSIM={metrics['recon_ssim']:.4f} PSNR={metrics['recon_psnr']:.2f} | "
+                  f"DICOM full SSIM={metrics['dicom_full_ssim']:.4f} sparse SSIM={metrics['dicom_sparse_ssim']:.4f}")
+
+            global_slice_idx += 1
 
     # Summary
     if all_metrics:
         avg = {k: np.mean([m[k] for m in all_metrics]) for k in all_metrics[0]}
         print(f"\n--- Average over {len(all_metrics)} slices ---")
-        print(f"Sinogram  SSIM={avg['sino_ssim']:.4f}  PSNR={avg['sino_psnr']:.2f}")
-        print(f"Recon     SSIM={avg['recon_ssim']:.4f}  PSNR={avg['recon_psnr']:.2f}")
+        print(f"Sinogram       SSIM={avg['sino_ssim']:.4f}  PSNR={avg['sino_psnr']:.2f}")
+        print(f"Recon (mu)     SSIM={avg['recon_ssim']:.4f}  PSNR={avg['recon_psnr']:.2f}")
+        print(f"DICOM full FBP SSIM={avg['dicom_full_ssim']:.4f}  PSNR={avg['dicom_full_psnr']:.2f}")
+        print(f"DICOM sparse   SSIM={avg['dicom_sparse_ssim']:.4f}  PSNR={avg['dicom_sparse_psnr']:.2f}")
 
         np.savez(os.path.join(save_dir, 'metrics.npz'), **{
             k: [m[k] for m in all_metrics] for k in all_metrics[0]
