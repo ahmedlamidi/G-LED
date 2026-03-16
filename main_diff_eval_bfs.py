@@ -126,11 +126,11 @@ if __name__ == '__main__':
 	# 	model.load_state_dict(torch.load(args_seq.current_model_save_path+'model_epoch_'+str(args_final.Nt_read),map_location=torch.device(args_final.device)))	
 	
 	unet1 = Unet3D(dim=args_diff.unet_dim,
-				   cond_images_channels=1, 
-				   memory_efficient=True, 
+				   cond_images_channels=2,  # masked sinogram + binary mask
+				   memory_efficient=True,
 				   dim_mults=(1, 2,4,8)).to(torch.device(args_diff.device))  #mid: mid channel
-	image_sizes = (592)
-	image_width = (816) 
+	image_sizes = (720)   # full sinogram height
+	image_width = (816)
 	imagen = ElucidatedImagen(
             unets = (unet1),
             image_sizes = image_sizes,

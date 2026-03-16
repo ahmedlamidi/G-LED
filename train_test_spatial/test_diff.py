@@ -39,12 +39,8 @@ def test_final(args_final,
     contour_dir = os.path.join(args_final.experiment_path, 'contour')
     os.makedirs(contour_dir, exist_ok=True)
 
-    loss_func = torch.nn.MSELoss()
     vf = 1  # video frames per chunk
     Nvf = args_final.test_Nt // vf
-
-    all_ssim = []
-    all_psnr = []
 
     with torch.no_grad():
         print('total iterations:', len(data_loader))
@@ -53,38 +49,24 @@ def test_final(args_final,
             print(f"Original batch shape: {batch.shape}")
             b_size = batch.shape[0]
             assert b_size == 1
-            num_time = batch.shape[1]
-            num_velocity = batch.shape[2] if batch.ndim == 5 else 1
             H, W = batch.shape[-2], batch.shape[-1]
 
             # Same conditioning split as train_diff
             cutoff = int(H * 0.75)
-            batch_cond_indices = [i for i in range(H) if i % 4 == 0 and i < cutoff]
-            label_indices = [i for i in range(H) if not (i % 4 == 0 and i < cutoff)]
-            original_pred_h = len(label_indices)
-            original_cond_h = len(batch_cond_indices)
+            cond_indices = [i for i in range(H) if i % 4 == 0 and i < cutoff]
 
-            batch_cond = batch[..., batch_cond_indices, :]   # condition rows
-            batch_target = batch[..., label_indices, :]      # ground truth target rows
+            # Build mask-based conditioning (same as train_diff)
+            # Channel 0: masked sinogram, Channel 1: binary mask
+            masked_sino = torch.zeros_like(batch)
+            mask = torch.zeros_like(batch)
+            masked_sino[..., cond_indices, :] = batch[..., cond_indices, :]
+            mask[..., cond_indices, :] = 1.0
+            batch_cond = torch.cat([masked_sino, mask], dim=2)  # [B, T, 2, H, W]
 
-            # Pad height to multiple of 16 (same as train_diff)
-            def pad_to_16(tensor):
-                h = tensor.shape[-2]
-                pad_h = (16 - h % 16) % 16
-                if pad_h > 0:
-                    B, T, C, Hp, Wp = tensor.shape
-                    tensor = tensor.reshape(B * T, C, Hp, Wp)
-                    tensor = F.pad(tensor, (0, 0, 0, pad_h), mode='replicate')
-                    tensor = tensor.reshape(B, T, C, Hp + pad_h, Wp)
-                return tensor, pad_h
+            # Permute to [B, C, T, H, W]
+            batch_cond_perm = batch_cond.permute(0, 2, 1, 3, 4)  # [B, 2, T, H, W]
 
-            batch_cond_padded, cond_pad = pad_to_16(batch_cond)
-            batch_target_padded, pred_pad = pad_to_16(batch_target)
-
-            # Permute to [B, C, T, H, W] for diffusion model
-            batch_cond_perm = batch_cond_padded.permute(0, 2, 1, 3, 4)
-
-            # Create output directory for this batch
+            # Create output directory
             seq_name = 'batch' + str(iteration)
             batch_dir = os.path.join(contour_dir, seq_name)
             os.makedirs(batch_dir, exist_ok=True)
@@ -99,61 +81,55 @@ def test_final(args_final,
                     cond_images=cond_chunk
                 ).detach().cpu().numpy()
 
-                # Save reconstruction chunk
                 np.save(os.path.join(batch_dir, f"recon_micro_{j}.npy"), save_arr)
-                # Save condition chunk
                 np.save(os.path.join(batch_dir, f"recon_micro_{j}gt.npy"),
                         cond_chunk.detach().cpu().numpy())
                 recon_micro.append(save_arr)
 
-            # Save ground truth target (label rows, unpadded)
-            gt_target_np = batch_target[0, 0, 0].cpu().numpy()  # [H_label, W]
-            np.save(os.path.join(batch_dir, "ground_truth_target.npy"), gt_target_np)
-
-            # Save ground truth condition (cond rows, unpadded)
-            gt_cond_np = batch_cond[0, 0, 0].cpu().numpy()  # [H_cond, W]
-            np.save(os.path.join(batch_dir, "ground_truth_cond.npy"), gt_cond_np)
-
-            # Save full original sinogram for reference
+            # Save ground truth full sinogram
             full_sino_np = batch[0, 0, 0].cpu().numpy()  # [H, W]
             np.save(os.path.join(batch_dir, "ground_truth_full.npy"), full_sino_np)
 
-            # Save index mappings for reconstruction
-            np.save(os.path.join(batch_dir, "cond_indices.npy"), np.array(batch_cond_indices))
-            np.save(os.path.join(batch_dir, "label_indices.npy"), np.array(label_indices))
+            # Save condition info
+            masked_sino_np = masked_sino[0, 0, 0].cpu().numpy()
+            mask_np = mask[0, 0, 0].cpu().numpy()
+            np.save(os.path.join(batch_dir, "masked_sinogram.npy"), masked_sino_np)
+            np.save(os.path.join(batch_dir, "mask.npy"), mask_np)
+            np.save(os.path.join(batch_dir, "cond_indices.npy"), np.array(cond_indices))
 
-            # Concatenate all reconstruction chunks and crop padding
-            recon_all = np.concatenate(recon_micro, axis=2)  # along time dim
-            # Squeeze to 2D: [B, C, T, H_padded, W] -> [H_padded, W]
-            recon_2d = recon_all[0, 0, 0]
-            # Crop padding to match original prediction height
-            recon_2d = recon_2d[:original_pred_h, :]
+            # Concatenate reconstruction chunks
+            recon_all = np.concatenate(recon_micro, axis=2)
+            recon_2d = recon_all[0, 0, 0]  # [H, W] - full sinogram reconstruction
 
-            # Compute MSE loss
-            mse = np.mean((recon_2d - gt_target_np) ** 2)
-            print(f"  {seq_name}: MSE = {mse:.6f}")
+            # Compute MSE (full sinogram)
+            mse = np.mean((recon_2d - full_sino_np) ** 2)
 
-            # Quick visualization
+            # Compute MSE on unknown rows only
+            all_rows = set(range(H))
+            unknown_rows = sorted(all_rows - set(cond_indices))
+            mse_unknown = np.mean((recon_2d[unknown_rows, :] - full_sino_np[unknown_rows, :]) ** 2)
+            mse_known = np.mean((recon_2d[cond_indices, :] - full_sino_np[cond_indices, :]) ** 2)
+
+            print(f"  {seq_name}: MSE_full={mse:.6f}, MSE_unknown={mse_unknown:.6f}, MSE_known={mse_known:.6f}")
+
+            # Visualization
             if save_flag:
                 fig, axes = plt.subplots(1, 4, figsize=(20, 5))
 
-                norm = matplotlib.colors.Normalize(
-                    vmin=full_sino_np.min(), vmax=full_sino_np.max())
-
                 axes[0].imshow(full_sino_np, cmap='gray', aspect='auto')
-                axes[0].set_title('Full Sinogram (GT)')
+                axes[0].set_title('Ground Truth (Full)')
                 axes[0].axis('off')
 
-                axes[1].imshow(gt_cond_np, cmap='gray', aspect='auto')
-                axes[1].set_title(f'Condition ({len(batch_cond_indices)} rows)')
+                axes[1].imshow(masked_sino_np, cmap='gray', aspect='auto')
+                axes[1].set_title(f'Masked Condition ({len(cond_indices)} known rows)')
                 axes[1].axis('off')
 
-                axes[2].imshow(gt_target_np, cmap='gray', aspect='auto')
-                axes[2].set_title(f'GT Target ({original_pred_h} rows)')
+                axes[2].imshow(recon_2d, cmap='gray', aspect='auto')
+                axes[2].set_title(f'Reconstruction (MSE={mse:.4f})')
                 axes[2].axis('off')
 
-                axes[3].imshow(recon_2d, cmap='gray', aspect='auto')
-                axes[3].set_title(f'Reconstruction (MSE={mse:.4f})')
+                axes[3].imshow(np.abs(recon_2d - full_sino_np), cmap='hot', aspect='auto')
+                axes[3].set_title(f'Error (unknown MSE={mse_unknown:.4f})')
                 axes[3].axis('off')
 
                 plt.tight_layout()

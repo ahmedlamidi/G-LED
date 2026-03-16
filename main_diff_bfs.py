@@ -105,11 +105,11 @@ if __name__ == '__main__':
 	Create diffusion model
 	"""
 	unet1 = Unet3D(dim=diff_args.unet_dim,
-				   cond_images_channels=1, 
-				   memory_efficient=True, 
+				   cond_images_channels=2,  # masked sinogram + binary mask
+				   memory_efficient=True,
 				   dim_mults=(1, 2, 4, 8)).to(torch.device(diff_args.device))  #mid: mid channel (removed 8 to save memory)
-	image_sizes = (592)  # Reduced from 1400
-	image_width = (816)  # Reduced from 1000
+	image_sizes = (720)   # full sinogram height (no row extraction needed)
+	image_width = (816)
 	imagen = ElucidatedImagen(
 		unets = (unet1),
 		image_sizes = image_sizes,

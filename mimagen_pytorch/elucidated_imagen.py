@@ -403,6 +403,7 @@ class ElucidatedImagen(nn.Module):
             sigma_max=None,
             physics_guidance = None,
             args_sample = None,
+            data_consistency=True,
             **kwargs
     ):
         # get specific sampling hyperparameters for unet
@@ -457,6 +458,15 @@ class ElucidatedImagen(nn.Module):
             cond_scale=cond_scale,
             **kwargs
         )
+
+        # Data consistency: extract known sinogram and mask from cond_images
+        # cond_images is [B, 2, T, H, W] — ch0 = masked sinogram, ch1 = binary mask
+        dc_known_sino = None
+        dc_mask = None
+        ci = kwargs.get('cond_images')
+        if data_consistency and exists(ci) and ci.shape[1] >= 2:
+            dc_known_sino = self.normalize_img(ci[:, 0:1])  # [B, 1, T, H, W] normalized to model space
+            dc_mask = (ci[:, 1:2] > 0.5).float()  # [B, 1, T, H, W] binary mask (1=known)
 
         # gradually denoise
 
@@ -583,8 +593,12 @@ class ElucidatedImagen(nn.Module):
                                 denoised_over_sigma + denoised_prime_over_sigma)
 
                 images = images_next
-                # if physics_guidance is not None:
-                #     images = images + update
+
+                # Data consistency: replace known rows with GT at current noise level
+                if exists(dc_known_sino) and exists(dc_mask) and sigma_next > 0:
+                    dc_noise = torch.randn_like(dc_known_sino)
+                    noised_known = dc_known_sino + sigma_next * dc_noise
+                    images = images * (1.0 - dc_mask) + noised_known * dc_mask
 
                 if has_inpainting and not (is_last_resample_step or is_last_timestep):
                     # renoise in repaint and then resample
@@ -592,12 +606,17 @@ class ElucidatedImagen(nn.Module):
                     images = images + (sigma - sigma_next) * repaint_noise
 
                 x_start = model_output if not has_second_order_correction else model_output_next  # save model output for self conditioning
+
         if clamp:
             images = images.clamp(-1., 1.)
 
+        # Final data consistency: at sigma=0, replace known rows with clean GT
+        if exists(dc_known_sino) and exists(dc_mask):
+            images = images * (1.0 - dc_mask) + dc_known_sino * dc_mask
+
         if has_inpainting:
             images = images * ~inpaint_masks + inpaint_images * inpaint_masks
-        
+
         return self.unnormalize_img(images)
 
     @torch.no_grad()
@@ -800,11 +819,11 @@ class ElucidatedImagen(nn.Module):
             text_masks=None,
             unet_number=None,
             cond_images=None,
-            cond_indices=None,       # ← new parameter
-            label_indices=None,      # ← new parameter
-            original_pred_h=None,    # ← new parameter
-            original_cond_h=None,    # ← new parameter
-            total_angles=720,        # ← new parameter
+            total_angles=720,
+            cond_indices=None,       # legacy (unused with mask conditioning)
+            label_indices=None,      # legacy (unused with mask conditioning)
+            original_pred_h=None,    # legacy (unused with mask conditioning)
+            original_cond_h=None,    # legacy (unused with mask conditioning)
             **kwargs
     ):
         #images = images.to(self.device) # Han Gao added 
@@ -967,60 +986,18 @@ class ElucidatedImagen(nn.Module):
 
         can_compute_physics = (
             self.physics_loss_weight > 0
-            and exists(cond_images)
-            and exists(cond_indices)
-            and exists(label_indices)
-            and exists(original_pred_h)
-            and exists(original_cond_h)
+            and exists(total_angles)
+            and total_angles > 1
         )
 
         if can_compute_physics:
-
-            # ── Step 1: Remove padding, detach cond (no grads needed for known data)
-            if denoised_images.ndim == 5:
-                pred_unp = denoised_images[:, :, :, :original_pred_h, :]
-                cond_unp = cond_images[:, :, :, :original_cond_h, :].detach()
-            else:
-                pred_unp = denoised_images[:, :, :original_pred_h, :]
-                cond_unp = cond_images[:, :, :original_cond_h, :].detach()
-
-            # ── Step 2: Symmetry loss directly on pred/cond rows (no full sinogram)
-            # p(θ, s) = p(θ + 180°, -s) → angle i pairs with angle i + half
+            # Full-sinogram symmetry: p(θ, s) = p(θ + 180°, -s)
+            # With mask conditioning the model outputs the full sinogram,
+            # so we simply pair the first half of angles with the second half.
             half = total_angles // 2
-            label_pos = {a: p for p, a in enumerate(label_indices)}
-            cond_pos = {a: p for p, a in enumerate(cond_indices)}
-
-            bg1, bg2 = [], []       # both-generated: pred positions
-            mp1, mc2 = [], []       # mixed: pred in first half, cond in second
-            mc1, mp2 = [], []       # mixed: cond in first half, pred in second
-
-            for i in range(half):
-                j = i + half
-                i_gen = i in label_pos
-                j_gen = j in label_pos
-                if i_gen and j_gen:
-                    bg1.append(label_pos[i]); bg2.append(label_pos[j])
-                elif i_gen and j in cond_pos:
-                    mp1.append(label_pos[i]); mc2.append(cond_pos[j])
-                elif j_gen and i in cond_pos:
-                    mc1.append(cond_pos[i]); mp2.append(label_pos[j])
-
-            terms = []
-            if bg1:
-                a = pred_unp[..., bg1, :]
-                b = torch.flip(pred_unp[..., bg2, :], dims=[-1])
-                terms.append(F.mse_loss(a, b))
-            if mp1:
-                a = pred_unp[..., mp1, :]
-                b = torch.flip(cond_unp[..., mc2, :], dims=[-1])
-                terms.append(F.mse_loss(a, b) * 0.5)
-            if mc1:
-                a = cond_unp[..., mc1, :]
-                b = torch.flip(pred_unp[..., mp2, :], dims=[-1])
-                terms.append(F.mse_loss(a, b) * 0.5)
-
-            if terms:
-                physics_loss = sum(terms) / len(terms)
+            first_half  = denoised_images[..., :half, :]
+            second_half = denoised_images[..., half:, :]
+            physics_loss = F.mse_loss(first_half, torch.flip(second_half, dims=[-1]))
 
         # ── Combine losses ────────────────────────────────────────────
         data_loss = losses.mean()

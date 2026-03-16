@@ -990,8 +990,8 @@ class ImagenTrainer(nn.Module):
         accumulated_physics_loss = 0.
         is_tuple_format = False
         
-        # Extract non-batchable kwargs before splitting (lists get incorrectly chunked)
-        physics_meta_keys = ('cond_indices', 'label_indices', 'original_pred_h', 'original_cond_h', 'total_angles')
+        # Extract non-batchable kwargs before splitting (scalars/lists get incorrectly chunked)
+        physics_meta_keys = ('total_angles', 'cond_indices', 'label_indices', 'original_pred_h', 'original_cond_h')
         physics_meta = {k: kwargs.pop(k) for k in physics_meta_keys if k in kwargs}
 
         #print(args[0].device)

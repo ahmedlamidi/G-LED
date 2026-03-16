@@ -91,47 +91,36 @@ def train_epoch(diff_args, seq_args, trainer, data_loader, down_sampler, up_samp
     data_loss_epoch = []
     physics_loss_epoch = []
 
-    # Pre-compute indices once (constant across all iterations)
+    # Pre-compute condition indices once (constant across all iterations)
     sample_H = 720  # sinogram height from dataset
     cutoff = int(sample_H * 0.75)
-    batch_cond_indices = [i for i in range(sample_H) if i % 4 == 0 and i < cutoff]
-    label_indices = [i for i in range(sample_H) if not (i % 4 == 0 and i < cutoff)]
-    original_pred_h = len(label_indices)
-    original_cond_h = len(batch_cond_indices)
-
-    # Pre-compute padding amount
-    pred_pad = (16 - original_pred_h % 16) % 16
-    cond_pad = (16 - original_cond_h % 16) % 16
+    cond_indices = [i for i in range(sample_H) if i % 4 == 0 and i < cutoff]
 
     for iteration, batch in tqdm(enumerate(data_loader)):
+        # batch shape: [B, T, C, H, W] = [B, 1, 1, 720, 816]
         H, W = batch.shape[-2], batch.shape[-1]
 
-        batch_cond = batch[..., batch_cond_indices, :]
-        batch_label = batch[..., label_indices, :]
+        # Build mask-based conditioning: full-resolution 2-channel image
+        # Channel 0: masked sinogram (known rows filled, zeros elsewhere)
+        # Channel 1: binary mask (1 = known row, 0 = unknown row)
+        masked_sino = torch.zeros_like(batch)
+        mask = torch.zeros_like(batch)
+        masked_sino[..., cond_indices, :] = batch[..., cond_indices, :]
+        mask[..., cond_indices, :] = 1.0
 
-        if pred_pad > 0:
-            B, T, C, Hp, Wp = batch_label.shape
-            batch_label = batch_label.reshape(B * T, C, Hp, Wp)
-            batch_label = F.pad(batch_label, (0, 0, 0, pred_pad), mode='replicate')
-            batch_label = batch_label.reshape(B, T, C, Hp + pred_pad, Wp)
-        if cond_pad > 0:
-            B, T, C, Hc, Wc = batch_cond.shape
-            batch_cond = batch_cond.reshape(B * T, C, Hc, Wc)
-            batch_cond = F.pad(batch_cond, (0, 0, 0, cond_pad), mode='replicate')
-            batch_cond = batch_cond.reshape(B, T, C, Hc + cond_pad, Wc)
+        # Concatenate along channel dim: [B, T, 2, H, W]
+        batch_cond = torch.cat([masked_sino, mask], dim=2)
 
-        batch_label = batch_label.permute([0, 2, 1, 3, 4])
-        batch_cond  = batch_cond.permute([0, 2, 1, 3, 4])
+        # Target is the full sinogram: [B, T, 1, H, W]
+        # Permute both to [B, C, T, H, W] for the diffusion model
+        batch_label = batch.permute([0, 2, 1, 3, 4])       # [B, 1, T, H, W]
+        batch_cond  = batch_cond.permute([0, 2, 1, 3, 4])  # [B, 2, T, H, W]
 
         result = trainer(
             batch_label,
             cond_images=batch_cond,
             unet_number=1,
             ignore_time=False,
-            cond_indices=batch_cond_indices,
-            label_indices=label_indices,
-            original_pred_h=original_pred_h,
-            original_cond_h=original_cond_h,
             total_angles=H
         )
         trainer.update(unet_number=1)
