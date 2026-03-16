@@ -108,7 +108,6 @@ class ElucidatedImagen(nn.Module):
             S_tmin=0.05,
             S_tmax=50,
             S_noise=1.003,
-            physics_loss_weight=1.0,  # weight for physics-informed loss: p(s, θ) = p(-s, θ + 180°)
     ):
         super().__init__()
 
@@ -207,10 +206,6 @@ class ElucidatedImagen(nn.Module):
 
         self.dynamic_thresholding = cast_tuple(dynamic_thresholding, num_unets)
         self.dynamic_thresholding_percentile = dynamic_thresholding_percentile
-        
-        # physics loss weight
-        
-        self.physics_loss_weight = physics_loss_weight
 
         # elucidating parameters
 
@@ -819,11 +814,6 @@ class ElucidatedImagen(nn.Module):
             text_masks=None,
             unet_number=None,
             cond_images=None,
-            total_angles=720,
-            cond_indices=None,       # legacy (unused with mask conditioning)
-            label_indices=None,      # legacy (unused with mask conditioning)
-            original_pred_h=None,    # legacy (unused with mask conditioning)
-            original_cond_h=None,    # legacy (unused with mask conditioning)
             **kwargs
     ):
         #images = images.to(self.device) # Han Gao added 
@@ -981,26 +971,5 @@ class ElucidatedImagen(nn.Module):
 
         # loss weighting
         losses = losses * self.loss_weight(hp.sigma_data, sigmas)
-        
-        physics_loss = torch.tensor(0.0, device=images.device)
 
-        can_compute_physics = (
-            self.physics_loss_weight > 0
-            and exists(total_angles)
-            and total_angles > 1
-        )
-
-        if can_compute_physics:
-            # Full-sinogram symmetry: p(θ, s) = p(θ + 180°, -s)
-            # With mask conditioning the model outputs the full sinogram,
-            # so we simply pair the first half of angles with the second half.
-            half = total_angles // 2
-            first_half  = denoised_images[..., :half, :]
-            second_half = denoised_images[..., half:, :]
-            physics_loss = F.mse_loss(first_half, torch.flip(second_half, dims=[-1]))
-
-        # ── Combine losses ────────────────────────────────────────────
-        data_loss = losses.mean()
-        total_loss = data_loss + self.physics_loss_weight * physics_loss
-
-        return total_loss, data_loss.item(), physics_loss.item()
+        return losses.mean()
