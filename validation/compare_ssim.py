@@ -95,33 +95,20 @@ for batch_name in batch_folders:
         psnr_full = psnr(gt_full_norm, recon_full, data_range=1.0)
 
         # Create comparison figure
-        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+        fig, axes = plt.subplots(1, 3, figsize=(18, 10))
 
         # Row 1: Full images
-        axes[0, 0].imshow(gt_full_norm, cmap='gray', aspect='auto')
-        axes[0, 0].set_title('Ground Truth (Full)')
-        axes[0, 0].axis('off')
+        axes[0].imshow(gt_full_norm, cmap='gray', aspect='auto')
+        axes[0].set_title('Ground Truth (Full)')
+        axes[0].axis('off')
 
-        axes[0, 1].imshow(recon_full, cmap='gray', aspect='auto')
-        axes[0, 1].set_title(f'Reconstructed (Full)\nSSIM={ssim_full:.4f}, PSNR={psnr_full:.2f}dB')
-        axes[0, 1].axis('off')
+        axes[1].imshow(recon_full, cmap='gray', aspect='auto')
+        axes[1].set_title(f'Reconstructed (Full)\nSSIM={ssim_full:.4f}, PSNR={psnr_full:.2f}dB')
+        axes[1].axis('off')
 
-        axes[0, 2].imshow(np.abs(gt_full_norm - recon_full), cmap='hot', aspect='auto')
-        axes[0, 2].set_title('Absolute Error (Full)')
-        axes[0, 2].axis('off')
-
-        # Row 2: Target rows only
-        axes[1, 0].imshow(gt_target_norm, cmap='gray', aspect='auto')
-        axes[1, 0].set_title(f'GT Target ({len(label_indices)} rows)')
-        axes[1, 0].axis('off')
-
-        axes[1, 1].imshow(img_gen_norm, cmap='gray', aspect='auto')
-        axes[1, 1].set_title(f'Generated Target\nSSIM={ssim_value:.4f}, PSNR={psnr_value:.2f}dB')
-        axes[1, 1].axis('off')
-
-        axes[1, 2].imshow(np.abs(gt_target_norm - img_gen_norm), cmap='hot', aspect='auto')
-        axes[1, 2].set_title(f'Absolute Error\nMSE={mse_value:.6f}')
-        axes[1, 2].axis('off')
+        axes[2].imshow(np.abs(gt_target_norm - img_gen_norm), cmap='hot', aspect='auto')
+        axes[2].set_title(f'Absolute Error\nMSE={mse_value:.6f}')
+        axes[2].axis('off')
 
         fig.suptitle(f'{batch_name} | Target SSIM: {ssim_value:.4f} | Full SSIM: {ssim_full:.4f}',
                      fontsize=16, fontweight='bold')
