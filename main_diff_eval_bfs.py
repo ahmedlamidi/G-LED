@@ -28,7 +28,7 @@ class Args_final_eval:
 		for finding the dynamics dir
 		"""
 		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/mar_11_horizontal_PIML_3',
+								 default='output/mar_11_horizontal_None',
 								 help='all the information of bfs training')
 		
 		"""
@@ -107,7 +107,7 @@ if __name__ == '__main__':
 	"""
 	Fetch dataset
 	"""
-	data_set = dicom_dataset(data_path="data/test_data", detector_count=816, angle_step=(360/720))
+	data_set = dicom_dataset(data_path="data/test_data", detector_count=816, angle_step=(360/720), cache_dir="data/sino_cache_test")
 	
 	data_loader = DataLoader(dataset=data_set, 
 							 shuffle=False,
@@ -153,7 +153,7 @@ if __name__ == '__main__':
             auto_normalize_img = False  # Han Gao make it false
             ).to(torch.device(args_final.device))
 	trainer = ImagenTrainer(imagen, device =torch.device(args_final.device))
-	trainer.load(path=args_diff.model_save_path+'/checkpoint_epoch_200')
+	trainer.load(path=args_diff.model_save_path+'/best_model_sofar')
 	test_final_overall(args_final,
 					   args_seq,
 					   args_diff,

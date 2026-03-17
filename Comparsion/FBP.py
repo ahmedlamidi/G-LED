@@ -5,8 +5,6 @@ import astra
 import matplotlib.pyplot as plt
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import peak_signal_noise_ratio as psnr
-import imageio.v3 as iio
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'data'))
 from dicom_preprocess import load_series_from, convert_hu_to_mu
 
@@ -14,14 +12,6 @@ from dicom_preprocess import load_series_from, convert_hu_to_mu
 def convert_mu_to_hu(mu):
     """Inverse of convert_hu_to_mu: HU = (mu / 0.02 - 1) * 1000."""
     return (mu / 0.02 - 1.0) * 1000.0
-
-
-def hu_to_display(ct_slice):
-    """Convert HU image to [0, 255] uint8 for PNG saving (window: [-1024, 1000])."""
-    lo, hi = -1024.0, 1000.0
-    clipped = np.clip(ct_slice, lo, hi).astype(np.float32)
-    normalized = (clipped - lo) / (hi - lo)
-    return (normalized * 255.0 + 0.5).astype(np.uint8)
 
 
 def build_geometry(H, W, dx, dy, detector_count, angle_step):
@@ -117,12 +107,10 @@ def compare_slice(ct_slice_hu, mu_slice, vol_geom, proj_geom_full, full_angles,
     recon_ssim = ssim(recon_full_mu, recon_sparse_mu, data_range=recon_data_range)
     recon_psnr = psnr(recon_full_mu, recon_sparse_mu, data_range=recon_data_range)
 
-    # -- DICOM space metrics (HU): compare original CT slice vs FBP reconstructions --
-    hu_data_range = ct_slice_hu.max() - ct_slice_hu.min()
-    dicom_full_ssim = ssim(ct_slice_hu, recon_full_hu, data_range=hu_data_range)
-    dicom_full_psnr = psnr(ct_slice_hu, recon_full_hu, data_range=hu_data_range)
-    dicom_sparse_ssim = ssim(ct_slice_hu, recon_sparse_hu, data_range=hu_data_range)
-    dicom_sparse_psnr = psnr(ct_slice_hu, recon_sparse_hu, data_range=hu_data_range)
+    # -- DICOM space metrics (HU): compare full FBP vs sparse FBP --
+    hu_data_range = recon_full_hu.max() - recon_full_hu.min()
+    dicom_ssim = ssim(recon_full_hu, recon_sparse_hu, data_range=hu_data_range)
+    dicom_psnr = psnr(recon_full_hu, recon_sparse_hu, data_range=hu_data_range)
 
     # -- Visualization (3 rows) --
     fig, axes = plt.subplots(3, 3, figsize=(18, 15))
@@ -144,49 +132,45 @@ def compare_slice(ct_slice_hu, mu_slice, vol_geom, proj_geom_full, full_angles,
     axes[1, 2].imshow(np.abs(recon_full_mu - recon_sparse_mu), cmap='hot')
     axes[1, 2].set_title(f'Recon Diff (SSIM={recon_ssim:.4f}, PSNR={recon_psnr:.2f})')
 
-    # Row 3: DICOM space (HU) — original vs full FBP vs sparse FBP
+    # Row 3: DICOM space (HU) — full FBP vs sparse FBP
     hu_vmin, hu_vmax = -1024.0, 1000.0
-    axes[2, 0].imshow(ct_slice_hu, cmap='gray', vmin=hu_vmin, vmax=hu_vmax)
-    axes[2, 0].set_title('Original DICOM (HU)')
-    axes[2, 1].imshow(recon_full_hu, cmap='gray', vmin=hu_vmin, vmax=hu_vmax)
-    axes[2, 1].set_title(f'Full FBP→HU (SSIM={dicom_full_ssim:.4f})')
-    axes[2, 2].imshow(recon_sparse_hu, cmap='gray', vmin=hu_vmin, vmax=hu_vmax)
-    axes[2, 2].set_title(f'Sparse FBP→HU (SSIM={dicom_sparse_ssim:.4f})')
+    axes[2, 0].imshow(recon_full_hu, cmap='gray', vmin=hu_vmin, vmax=hu_vmax)
+    axes[2, 0].set_title('Full FBP → HU')
+    axes[2, 1].imshow(recon_sparse_hu, cmap='gray', vmin=hu_vmin, vmax=hu_vmax)
+    axes[2, 1].set_title(f'Sparse FBP → HU')
+    axes[2, 2].imshow(np.abs(recon_full_hu - recon_sparse_hu), cmap='hot')
+    axes[2, 2].set_title(f'HU Diff (SSIM={dicom_ssim:.4f}, PSNR={dicom_psnr:.2f})')
 
     for ax in axes.flat:
         ax.axis('off')
 
     plt.tight_layout()
-    fig.savefig(os.path.join(save_dir, f'slice_{slice_idx}.png'),
-                bbox_inches='tight', dpi=150)
+    if slice_idx < 10:
+        fig.savefig(os.path.join(save_dir, f'slice_{slice_idx}.png'),
+                    bbox_inches='tight', dpi=150)
     plt.close(fig)
 
     return {
         'sino_ssim': sino_ssim, 'sino_psnr': sino_psnr,
         'recon_ssim': recon_ssim, 'recon_psnr': recon_psnr,
-        'dicom_full_ssim': dicom_full_ssim, 'dicom_full_psnr': dicom_full_psnr,
-        'dicom_sparse_ssim': dicom_sparse_ssim, 'dicom_sparse_psnr': dicom_sparse_psnr,
+        'dicom_ssim': dicom_ssim, 'dicom_psnr': dicom_psnr,
     }
 
 
-def main():
-    data_path = "data/test_data"
-    detector_count = 816
-    angle_step = 360 / 720
-    save_dir = "Comparsion/results"
-    dicom_png_dir = "Comparsion/dicom_pngs"
-    os.makedirs(save_dir, exist_ok=True)
-    os.makedirs(dicom_png_dir, exist_ok=True)
-
-    # Same mask as train_diff: every 10th row in first 75%
+def run_setting(cutoff_pct, data_path, detector_count, angle_step, total_series):
+    """Run FBP comparison for a limited-view setting (first cutoff_pct% of angles)."""
     total_angles = 720
-    cutoff = int(total_angles * 0.75)
-    cond_indices = [i for i in range(total_angles) if i % 10 == 0 and i < cutoff]
-    print(f"Mask: {len(cond_indices)} known angles out of {total_angles} "
-          f"(first {cutoff}, every 10th)")
+    cutoff = int(total_angles * cutoff_pct / 100)
+    cond_indices = list(range(cutoff))
+    n_known = len(cond_indices)
 
-    # Load test data
-    total_series = load_series_from(data_path)
+    print(f"\n{'='*80}")
+    print(f"Limited view: first {cutoff_pct}% = {n_known} of {total_angles} angles")
+    print(f"{'='*80}")
+
+    save_dir = f"Comparsion/FBP_limited_{cutoff_pct}pct_{n_known}of{total_angles}"
+    os.makedirs(save_dir, exist_ok=True)
+
     all_metrics = []
     global_slice_idx = 0
 
@@ -194,7 +178,6 @@ def main():
         vol_zyx, spacing = series
         dx, dy, dz = spacing
 
-        # Build full geometry once per series
         H, W = vol_zyx[0].shape[:2]
         vol_geom, proj_geom_full, full_angles = build_geometry(
             H, W, dx, dy, detector_count, angle_step
@@ -204,37 +187,65 @@ def main():
             ct_slice_hu = vol_zyx[ind].astype(np.float32)
             mu_slice = convert_hu_to_mu(ct_slice_hu)
 
-            # Save first 20 DICOM slices as PNGs
-            if global_slice_idx < 20:
-                png_path = os.path.join(dicom_png_dir, f'dicom_{global_slice_idx:03d}.png')
-                iio.imwrite(png_path, hu_to_display(ct_slice_hu))
-                print(f"Saved {png_path}")
-
             metrics = compare_slice(
                 ct_slice_hu, mu_slice, vol_geom, proj_geom_full, full_angles,
                 cond_indices, dx, detector_count, save_dir, global_slice_idx
             )
             all_metrics.append(metrics)
 
-            print(f"Slice {global_slice_idx}: "
-                  f"Sino SSIM={metrics['sino_ssim']:.4f} PSNR={metrics['sino_psnr']:.2f} | "
+            print(f"  Slice {global_slice_idx}: "
                   f"Recon SSIM={metrics['recon_ssim']:.4f} PSNR={metrics['recon_psnr']:.2f} | "
-                  f"DICOM full SSIM={metrics['dicom_full_ssim']:.4f} sparse SSIM={metrics['dicom_sparse_ssim']:.4f}")
+                  f"DICOM SSIM={metrics['dicom_ssim']:.4f} PSNR={metrics['dicom_psnr']:.2f}")
 
             global_slice_idx += 1
 
     # Summary
     if all_metrics:
         avg = {k: np.mean([m[k] for m in all_metrics]) for k in all_metrics[0]}
-        print(f"\n--- Average over {len(all_metrics)} slices ---")
+        print(f"\n--- {cutoff_pct}% Average over {len(all_metrics)} slices ---")
         print(f"Sinogram       SSIM={avg['sino_ssim']:.4f}  PSNR={avg['sino_psnr']:.2f}")
         print(f"Recon (mu)     SSIM={avg['recon_ssim']:.4f}  PSNR={avg['recon_psnr']:.2f}")
-        print(f"DICOM full FBP SSIM={avg['dicom_full_ssim']:.4f}  PSNR={avg['dicom_full_psnr']:.2f}")
-        print(f"DICOM sparse   SSIM={avg['dicom_sparse_ssim']:.4f}  PSNR={avg['dicom_sparse_psnr']:.2f}")
+        print(f"DICOM full-vs-limited SSIM={avg['dicom_ssim']:.4f}  PSNR={avg['dicom_psnr']:.2f}")
 
-        np.savez(os.path.join(save_dir, 'metrics.npz'), **{
-            k: [m[k] for m in all_metrics] for k in all_metrics[0]
-        })
+        import csv
+        csv_path = os.path.join(save_dir, 'metrics.csv')
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['slice'] + list(all_metrics[0].keys()))
+            writer.writeheader()
+            for i, m in enumerate(all_metrics):
+                writer.writerow({'slice': i, **m})
+
+    return avg if all_metrics else None
+
+
+def main():
+    data_path = "data/test_data"
+    detector_count = 816
+    angle_step = 360 / 720
+
+    # Load test data once
+    total_series = load_series_from(data_path)
+
+    cutoff_pcts = [12.5, 25, 50, 75]
+    summary = {}
+
+    for pct in cutoff_pcts:
+        avg = run_setting(pct, data_path, detector_count, angle_step, total_series)
+        if avg:
+            summary[pct] = avg
+
+    # Print final comparison table
+    print(f"\n{'='*80}")
+    print(f"FINAL COMPARISON — Limited View FBP")
+    print(f"{'='*80}")
+    print(f"{'View %':<10} {'Angles':<10} {'Recon SSIM':<12} {'Recon PSNR':<12} {'DICOM SSIM':<12} {'DICOM PSNR':<12}")
+    print("-" * 68)
+    for pct in cutoff_pcts:
+        if pct in summary:
+            avg = summary[pct]
+            n = int(720 * pct / 100)
+            print(f"{pct:<10} {n:<10} {avg['recon_ssim']:<12.4f} {avg['recon_psnr']:<12.2f} "
+                  f"{avg['dicom_ssim']:<12.4f} {avg['dicom_psnr']:<12.2f}")
 
 
 if __name__ == '__main__':

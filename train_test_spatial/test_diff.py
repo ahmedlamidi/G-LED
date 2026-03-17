@@ -53,7 +53,7 @@ def test_final(args_final,
 
             # Same conditioning split as train_diff
             cutoff = int(H * 0.75)
-            cond_indices = [i for i in range(H) if i % 4 == 0 and i < cutoff]
+            cond_indices = [i for i in range(H) if i % 10 == 0 and i < cutoff]
 
             # Build mask-based conditioning (same as train_diff)
             # Channel 0: masked sinogram, Channel 1: binary mask
@@ -101,13 +101,26 @@ def test_final(args_final,
             recon_all = np.concatenate(recon_micro, axis=2)
             recon_2d = recon_all[0, 0, 0]  # [H, W] - full sinogram reconstruction
 
+            # Replace known rows with ground truth values
+            recon_2d[cond_indices, :] = full_sino_np[cond_indices, :]
+
+            # Compute label (unknown) indices
+            all_rows = set(range(H))
+            label_indices = sorted(all_rows - set(cond_indices))
+
+            # Save ground truth splits and indices for compare_ssim.py
+            np.save(os.path.join(batch_dir, "ground_truth_target.npy"), full_sino_np[label_indices, :])
+            np.save(os.path.join(batch_dir, "ground_truth_cond.npy"), full_sino_np[cond_indices, :])
+            np.save(os.path.join(batch_dir, "label_indices.npy"), np.array(label_indices))
+
+            # Re-save recon with known rows replaced
+            np.save(os.path.join(batch_dir, "recon_micro_0.npy"), recon_2d)
+
             # Compute MSE (full sinogram)
             mse = np.mean((recon_2d - full_sino_np) ** 2)
 
             # Compute MSE on unknown rows only
-            all_rows = set(range(H))
-            unknown_rows = sorted(all_rows - set(cond_indices))
-            mse_unknown = np.mean((recon_2d[unknown_rows, :] - full_sino_np[unknown_rows, :]) ** 2)
+            mse_unknown = np.mean((recon_2d[label_indices, :] - full_sino_np[label_indices, :]) ** 2)
             mse_known = np.mean((recon_2d[cond_indices, :] - full_sino_np[cond_indices, :]) ** 2)
 
             print(f"  {seq_name}: MSE_full={mse:.6f}, MSE_unknown={mse_unknown:.6f}, MSE_known={mse_known:.6f}")

@@ -7,7 +7,7 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--base_folder",
-                    default='output/mar_11_horizontal_PIML_3/diffusion_folder/experiment_final_checkpoint_150/contour',
+                    default='output/mar_11_horizontal_None/diffusion_folder/experiment_final_checkpoint_150/contour',
                     help='Folder containing batch outputs from test_diff')
 args = parser.parse_args()
 
@@ -55,17 +55,24 @@ for batch_name in batch_folders:
         elif img_generated.ndim == 3:
             img_generated = img_generated[0]
 
-        # Crop height padding from generated output to match GT target dimensions
-        img_generated = img_generated[:gt_target.shape[0], :]
+        # Extract unknown rows from full reconstruction using label_indices
+        if img_generated.shape[0] == gt_full.shape[0]:
+            recon_full_2d = img_generated.copy()
+            img_generated = img_generated[label_indices, :]
+        else:
+            recon_full_2d = None
+            img_generated = img_generated[:gt_target.shape[0], :]
 
         print(f"{batch_name}: generated={img_generated.shape}, gt_target={gt_target.shape}, "
               f"gt_cond={gt_cond.shape}, gt_full={gt_full.shape}")
 
-        # Normalize both images to [0, 1] for SSIM/PSNR calculation
+        # Normalize all images to [0, 1] using shared min/max from full GT
+        # so that value correspondence is preserved across GT and reconstruction
+        global_min = gt_full.min()
+        global_max = gt_full.max()
         def normalize(img):
-            img_min, img_max = img.min(), img.max()
-            if img_max > img_min:
-                return (img - img_min) / (img_max - img_min)
+            if global_max > global_min:
+                return (img - global_min) / (global_max - global_min)
             return img
 
         img_gen_norm = normalize(img_generated)
@@ -82,13 +89,16 @@ for batch_name in batch_folders:
         # Calculate MSE
         mse_value = np.mean((gt_target_norm - img_gen_norm) ** 2)
 
-        # Reconstruct full sinogram by interleaving condition and generated rows
-        full_H, full_W = gt_full.shape
-        recon_full = np.zeros((full_H, full_W))
-        for idx, row in zip(cond_indices, range(len(cond_indices))):
-            recon_full[idx, :] = gt_cond_norm[row]
-        for idx, row in zip(label_indices, range(len(label_indices))):
-            recon_full[idx, :] = img_gen_norm[row]
+        # Reconstruct full sinogram
+        if recon_full_2d is not None:
+            recon_full = normalize(recon_full_2d)
+        else:
+            full_H, full_W = gt_full.shape
+            recon_full = np.zeros((full_H, full_W))
+            for idx, row in zip(cond_indices, range(len(cond_indices))):
+                recon_full[idx, :] = gt_cond_norm[row]
+            for idx, row in zip(label_indices, range(len(label_indices))):
+                recon_full[idx, :] = img_gen_norm[row]
 
         # Full-image SSIM (interleaved reconstruction vs full GT)
         ssim_full = ssim(gt_full_norm, recon_full, data_range=1.0)

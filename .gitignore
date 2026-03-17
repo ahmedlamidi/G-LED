@@ -14,3 +14,5 @@ __pycache__/
 /data/sino_cache_test
 .env
 wandb/
+Comparsion/*
+!Comparsion/*.py
