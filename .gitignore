@@ -13,3 +13,4 @@ __pycache__/
 /data/sino_cache
 /data/sino_cache_test
 wandb/
+.env
