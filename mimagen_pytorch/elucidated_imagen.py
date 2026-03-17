@@ -108,7 +108,12 @@ class ElucidatedImagen(nn.Module):
             S_tmin=0.05,
             S_tmax=50,
             S_noise=1.003,
-            physics_loss_weight=1.0,  # weight for physics-informed loss: p(s, θ) = p(-s, θ + 180°)
+            physics_loss_weight=0.1,  # weight for physics-informed loss
+            dc_loss_weight=0.5,       # weight for data-consistency loss on known sinogram rows
+            # Fan-beam CT geometry (must match dicom_preprocess.py)
+            fanbeam_dso=1000.0,       # source-to-origin distance (mm)
+            fanbeam_odd=600.0,        # origin-to-detector distance (mm)
+            fanbeam_det_spacing=0.75, # detector element spacing (mm); typical CT value
     ):
         super().__init__()
 
@@ -208,9 +213,11 @@ class ElucidatedImagen(nn.Module):
         self.dynamic_thresholding = cast_tuple(dynamic_thresholding, num_unets)
         self.dynamic_thresholding_percentile = dynamic_thresholding_percentile
         
-        # physics loss weight
-        
+        # loss weights and fan-beam geometry
         self.physics_loss_weight = physics_loss_weight
+        self.dc_loss_weight = dc_loss_weight
+        self.fanbeam_sdd = fanbeam_dso + fanbeam_odd  # source-to-detector distance
+        self.fanbeam_det_spacing = fanbeam_det_spacing
 
         # elucidating parameters
 
@@ -593,12 +600,6 @@ class ElucidatedImagen(nn.Module):
                                 denoised_over_sigma + denoised_prime_over_sigma)
 
                 images = images_next
-
-                # Data consistency: replace known rows with GT at current noise level
-                if exists(dc_known_sino) and exists(dc_mask) and sigma_next > 0:
-                    dc_noise = torch.randn_like(dc_known_sino)
-                    noised_known = dc_known_sino + sigma_next * dc_noise
-                    images = images * (1.0 - dc_mask) + noised_known * dc_mask
 
                 if has_inpainting and not (is_last_resample_step or is_last_timestep):
                     # renoise in repaint and then resample
@@ -991,16 +992,72 @@ class ElucidatedImagen(nn.Module):
         )
 
         if can_compute_physics:
-            # Full-sinogram symmetry: p(θ, s) = p(θ + 180°, -s)
-            # With mask conditioning the model outputs the full sinogram,
-            # so we simply pair the first half of angles with the second half.
-            half = total_angles // 2
-            first_half  = denoised_images[..., :half, :]
-            second_half = denoised_images[..., half:, :]
-            physics_loss = F.mse_loss(first_half, torch.flip(second_half, dims=[-1]))
+            # Fan-beam conjugate ray symmetry: p(β, t_d) = p(β + π + 2γ(t_d), -t_d)
+            # where γ(t_d) = arctan(t_d / SDD) is the fan angle for detector at position t_d.
+            # This reduces to the parallel-beam formula only when SDD → ∞.
+            # Reference: Kak & Slaney, Principles of Computerized Tomographic Imaging, Ch. 3.
+            N_ang = total_angles                          # e.g. 720
+            half  = N_ang // 2                           # 360
+            N_det = denoised_images.shape[-1]            # e.g. 816
+
+            # Physical detector positions (mm from centre)
+            j     = torch.arange(N_det, device=images.device, dtype=torch.float32)
+            t_j   = (j - (N_det - 1) * 0.5) * self.fanbeam_det_spacing
+            gamma = torch.atan(t_j / self.fanbeam_sdd)  # fan angle per detector [rad]
+
+            # Fractional angle-index correction: 2γ converted to index space
+            delta = gamma * (N_ang / torch.pi)           # [N_det]
+
+            # For source angle index i ∈ [0, half), conjugate is at angle (i + half + delta[j])
+            i_src  = torch.arange(half, device=images.device, dtype=torch.float32)  # [half]
+            i_conj = (i_src.unsqueeze(1) + half + delta.unsqueeze(0)) % N_ang       # [half, N_det]
+
+            # Conjugate detector: mirror about centre
+            j_conj = (N_det - 1) - j                    # [N_det]
+
+            # Normalise indices to [-1, 1] for F.grid_sample
+            # grid_sample convention: [..., 0] = x (W), [..., 1] = y (H)
+            norm_x = (2.0 * j_conj / (N_det - 1) - 1.0).unsqueeze(0).expand(half, -1)  # [half, N_det]
+            norm_y = 2.0 * i_conj / (N_ang - 1) - 1.0                                  # [half, N_det]
+            grid   = torch.stack([norm_x, norm_y], dim=-1)                              # [half, N_det, 2]
+
+            # Flatten batch / channel / time dims → [BCT, 1, N_ang, N_det]
+            orig_shape = denoised_images.shape
+            if denoised_images.ndim == 5:               # [B, C, T, H, W]
+                B_, C_, T_ = orig_shape[:3]
+                sino = denoised_images.reshape(B_ * C_ * T_, 1, N_ang, N_det)
+            else:                                       # [B, C, H, W]
+                B_, C_ = orig_shape[:2]; T_ = 1
+                sino = denoised_images.reshape(B_ * C_, 1, N_ang, N_det)
+
+            grid_b     = grid.unsqueeze(0).expand(sino.shape[0], -1, -1, -1)  # [BCT, half, N_det, 2]
+            conj_sino  = F.grid_sample(sino, grid_b, mode='bilinear',
+                                       align_corners=True, padding_mode='border')
+
+            # Restore original shape prefix
+            if denoised_images.ndim == 5:
+                conj_sino = conj_sino.reshape(B_, C_, T_, half, N_det)
+            else:
+                conj_sino = conj_sino.reshape(B_, C_, half, N_det)
+
+            first_half   = denoised_images[..., :half, :]
+            physics_loss = F.mse_loss(first_half, conj_sino)
+
+        # ── Data-consistency loss on known sinogram rows ──────────────
+        # cond_images channel 1 is the binary mask (1 = known row, 0 = unknown).
+        # We supervise only the pixels where the ground-truth measurement exists,
+        # normalising by the number of known pixels so the scale is independent
+        # of sparsity (every-4th-row conditioning → ~18 % of pixels are "known").
+        dc_loss = torch.tensor(0.0, device=images.device)
+        if self.dc_loss_weight > 0 and exists(cond_images):
+            mask = cond_images[:, 1:2, ...]              # [B, 1, T, H, W] or [B, 1, H, W]
+            n_known = mask.sum().clamp(min=1.0)
+            dc_loss = ((denoised_images - images) ** 2 * mask).sum() / n_known
 
         # ── Combine losses ────────────────────────────────────────────
         data_loss = losses.mean()
-        total_loss = data_loss + self.physics_loss_weight * physics_loss
+        total_loss = (data_loss
+                      + self.physics_loss_weight * physics_loss
+                      + self.dc_loss_weight * dc_loss)
 
-        return total_loss, data_loss.item(), physics_loss.item()
+        return total_loss, data_loss.item(), physics_loss.item(), dc_loss.item()

@@ -15,18 +15,20 @@ def train_diff(diff_args,
 			   data_loader,
 			   start_epoch=0):
 	# Load previous loss lists if resuming (support both old and new format)
-	total_loss_list, data_loss_list, physics_loss_list = [], [], []
-	
+	total_loss_list, data_loss_list, physics_loss_list, dc_loss_list = [], [], [], []
+
 	# Try loading new format first
 	total_file = os.path.join(diff_args.logging_path, 'total_loss.txt')
 	data_file = os.path.join(diff_args.logging_path, 'data_loss.txt')
 	physics_file = os.path.join(diff_args.logging_path, 'physics_loss.txt')
+	dc_file = os.path.join(diff_args.logging_path, 'dc_loss.txt')
 	
 	if start_epoch > 0:
 		if os.path.exists(total_file):
 			total_loss_list = list(np.loadtxt(total_file))
 			data_loss_list = list(np.loadtxt(data_file)) if os.path.exists(data_file) else []
 			physics_loss_list = list(np.loadtxt(physics_file)) if os.path.exists(physics_file) else []
+			dc_loss_list = list(np.loadtxt(dc_file)) if os.path.exists(dc_file) else []
 			print(f"Loaded {len(total_loss_list)} previous loss values")
 		else:
 			# Fallback to old format
@@ -49,7 +51,7 @@ def train_diff(diff_args,
 		up_sampler   = torch.nn.Upsample(size=[720, 448], 
 								     	 mode=seq_args.coarse_mode)
 		model, loss_components = train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler)
-		total_loss, data_loss, physics_loss = loss_components
+		total_loss, data_loss, physics_loss, dc_loss = loss_components
 		
 		if epoch % 1 ==0 and epoch > 0:
 			peep = 0
@@ -69,13 +71,15 @@ def train_diff(diff_args,
 		
 		# Update loss lists
 		total_loss_list.append(total_loss)
-		data_loss_list.append(data_loss) 
+		data_loss_list.append(data_loss)
 		physics_loss_list.append(physics_loss)
-		
+		dc_loss_list.append(dc_loss)
+
 		# Save loss values every epoch
 		np.savetxt(os.path.join(diff_args.logging_path, 'total_loss.txt'), total_loss_list)
 		np.savetxt(os.path.join(diff_args.logging_path, 'data_loss.txt'), data_loss_list)
 		np.savetxt(os.path.join(diff_args.logging_path, 'physics_loss.txt'), physics_loss_list)
+		np.savetxt(os.path.join(diff_args.logging_path, 'dc_loss.txt'), dc_loss_list)
 		
 		# Save best model when total loss improves
 		if epoch >= 1 and total_loss < min(total_loss_list[:-1], default=float('inf')):
@@ -90,15 +94,17 @@ def train_diff(diff_args,
 			"total_loss": total_loss,
 			"data_loss": data_loss,
 			"physics_loss": physics_loss,
+			"dc_loss": dc_loss,
 		})
 
-		print(f"Epoch {epoch}: Total Loss={total_loss:.6f}, Data Loss={data_loss:.6f}, Physics Loss={physics_loss:.6f}")
+		print(f"Epoch {epoch}: Total={total_loss:.6f}, Data={data_loss:.6f}, Physics={physics_loss:.6f}, DC={dc_loss:.6f}")
 
 
 def train_epoch(diff_args, seq_args, trainer, data_loader, down_sampler, up_sampler):
     loss_epoch = []
     data_loss_epoch = []
     physics_loss_epoch = []
+    dc_loss_epoch = []
 
     # Pre-compute condition indices once (constant across all iterations)
     sample_H = 720  # sinogram height from dataset
@@ -136,9 +142,10 @@ def train_epoch(diff_args, seq_args, trainer, data_loader, down_sampler, up_samp
 
         # Properly unpack tuple
         if isinstance(result, tuple):
-            loss, data_loss, physics_loss = result
+            loss, data_loss, physics_loss, dc_loss = result
             data_loss_epoch.append(data_loss)
             physics_loss_epoch.append(physics_loss)
+            dc_loss_epoch.append(dc_loss)
         else:
             loss = result
 
@@ -147,8 +154,8 @@ def train_epoch(diff_args, seq_args, trainer, data_loader, down_sampler, up_samp
     avg_loss = sum(loss_epoch) / len(loss_epoch)
     avg_data = sum(data_loss_epoch) / len(data_loss_epoch) if data_loss_epoch else avg_loss
     avg_phys = sum(physics_loss_epoch) / len(physics_loss_epoch) if physics_loss_epoch else 0.0
+    avg_dc   = sum(dc_loss_epoch) / len(dc_loss_epoch) if dc_loss_epoch else 0.0
     if data_loss_epoch:
-        print(f"Epoch avg | data: {avg_data:.4f} "
-              f"| physics: {avg_phys:.6f}")
+        print(f"Epoch avg | data: {avg_data:.4f} | physics: {avg_phys:.6f} | dc: {avg_dc:.6f}")
 
-    return trainer, (avg_loss, avg_data, avg_phys)
+    return trainer, (avg_loss, avg_data, avg_phys, avg_dc)
