@@ -116,17 +116,35 @@ def compare_slice(mu_slice, vol_geom, proj_geom_full, full_angles,
     return {'tv_ssim': tv_ssim, 'tv_psnr': tv_psnr}
 
 
-def run_setting(cutoff_pct, detector_count, angle_step, total_series):
+def run_setting(detector_count, angle_step, total_series,
+                cutoff_pct=None, step=None):
+    """
+    cutoff_pct only : contiguous first N% of angles  (limited-view)
+    step only       : every Nth angle within first 75%  (sparse)
+    both            : every Nth angle within first cutoff_pct%  (sparse + limited-view)
+    """
     total_angles = 720
-    cutoff = int(total_angles * cutoff_pct / 100)
-    cond_indices = list(range(cutoff))
-    n_known = len(cond_indices)
+    cutoff = int(total_angles * (cutoff_pct if cutoff_pct is not None else 75) / 100)
 
+    if step is None:
+        cond_indices = list(range(cutoff))
+        label = f"limited_{cutoff_pct}pct"
+        desc  = f"Limited view: first {cutoff_pct}% = {len(cond_indices)} of {total_angles} angles"
+    elif cutoff_pct is None:
+        cond_indices = [i for i in range(total_angles) if i % step == 0 and i < cutoff]
+        label = f"sparse_step{step}"
+        desc  = f"Sparse: every {step}th angle within first 75% = {len(cond_indices)} of {total_angles} angles"
+    else:
+        cond_indices = [i for i in range(total_angles) if i % step == 0 and i < cutoff]
+        label = f"sparse_step{step}_cutoff{cutoff_pct}pct"
+        desc  = f"Sparse+limited: every {step}th within first {cutoff_pct}% = {len(cond_indices)} of {total_angles} angles"
+
+    n_known = len(cond_indices)
     print(f"\n{'='*80}")
-    print(f"Limited view: first {cutoff_pct}% = {n_known} of {total_angles} angles")
+    print(desc)
     print(f"{'='*80}")
 
-    save_dir = f"Comparsion/FBP_TV_limited_{cutoff_pct}pct_{n_known}of{total_angles}"
+    save_dir = f"Comparsion/FBP_TV_{label}_{n_known}of{total_angles}"
     os.makedirs(save_dir, exist_ok=True)
 
     all_metrics = []
@@ -153,7 +171,7 @@ def run_setting(cutoff_pct, detector_count, angle_step, total_series):
 
     if all_metrics:
         avg = {k: np.mean([m[k] for m in all_metrics]) for k in all_metrics[0]}
-        print(f"\n--- {cutoff_pct}% Average over {len(all_metrics)} slices ---")
+        print(f"\n--- {label} average over {len(all_metrics)} slices ---")
         print(f"  FBP+TV: SSIM={avg['tv_ssim']:.4f}  PSNR={avg['tv_psnr']:.2f}")
 
         csv_path = os.path.join(save_dir, 'metrics.csv')
@@ -173,24 +191,42 @@ def main():
 
     total_series = load_series_from(data_path)
 
-    cutoff_pcts = [12.5, 25, 50, 75]
+    # ── Edit these two lists to configure runs ────────────────────────────────
+    # Each index is one run. Use None to leave that dimension unset.
+    #   cutoff_pct only  → contiguous limited-view
+    #   step only        → sparse every-Nth within 75%
+    #   both             → sparse every-Nth within cutoff_pct%
+    cutoff_pcts  = [None, 75,  75]   # e.g. [None, 75, 75]
+    sparse_steps = [10,   None, 10]  # e.g. [10,  None, 10]
+    # ─────────────────────────────────────────────────────────────────────────
+
+    assert len(cutoff_pcts) == len(sparse_steps), "Lists must be the same length"
+
     summary = {}
 
-    for pct in cutoff_pcts:
-        avg = run_setting(pct, detector_count, angle_step, total_series)
+    for i, (pct, step) in enumerate(zip(cutoff_pcts, sparse_steps)):
+        avg = run_setting(detector_count, angle_step, total_series,
+                          cutoff_pct=pct, step=step)
         if avg:
-            summary[pct] = avg
+            summary[i] = (pct, step, avg)
 
     print(f"\n{'='*80}")
-    print(f"FINAL COMPARISON — Limited View FBP+TV")
+    print(f"FINAL COMPARISON — FBP+TV")
     print(f"{'='*80}")
-    print(f"{'View %':<10} {'Angles':<8} {'SSIM':<10} {'PSNR':<10}")
-    print("-" * 40)
-    for pct in cutoff_pcts:
-        if pct in summary:
-            avg = summary[pct]
-            n = int(720 * pct / 100)
-            print(f"{pct:<10} {n:<8} {avg['tv_ssim']:<10.4f} {avg['tv_psnr']:<10.2f}")
+    print(f"{'Run':<4} {'Setting':<30} {'Angles':<8} {'SSIM':<10} {'PSNR':<10}")
+    print("-" * 64)
+    for i, (pct, step, avg) in summary.items():
+        cutoff = int(720 * (pct if pct is not None else 75) / 100)
+        if step is None:
+            n = cutoff
+            tag = f"limited {pct}%"
+        elif pct is None:
+            n = len([j for j in range(720) if j % step == 0 and j < cutoff])
+            tag = f"sparse step={step}"
+        else:
+            n = len([j for j in range(720) if j % step == 0 and j < cutoff])
+            tag = f"step={step} cutoff={pct}%"
+        print(f"{i:<4} {tag:<30} {n:<8} {avg['tv_ssim']:<10.4f} {avg['tv_psnr']:<10.2f}")
 
 
 if __name__ == '__main__':
