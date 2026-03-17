@@ -226,7 +226,7 @@ def main():
     # Load test data once
     total_series = load_series_from(data_path)
 
-    cutoff_pcts = [12.5, 25, 50, 75]
+    cutoff_pcts = [100]
     summary = {}
 
     for pct in cutoff_pcts:
