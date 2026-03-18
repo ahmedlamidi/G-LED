@@ -124,7 +124,7 @@ def run_setting(detector_count, angle_step, total_series,
     both            : every Nth angle within first cutoff_pct%  (sparse + limited-view)
     """
     total_angles = 720
-    cutoff = int(total_angles * (cutoff_pct if cutoff_pct is not None else 75) / 100)
+    cutoff = int(total_angles * (cutoff_pct if cutoff_pct is not None else 100) / 100)
 
     if step is None:
         cond_indices = list(range(cutoff))
@@ -181,6 +181,12 @@ def run_setting(detector_count, angle_step, total_series,
             for i, m in enumerate(all_metrics):
                 writer.writerow({'slice': i, **m})
 
+        summary_path = os.path.join(save_dir, 'summary.txt')
+        with open(summary_path, 'w') as f:
+            f.write(f"Summary — {label} ({len(all_metrics)} slices)\n")
+            f.write("=" * 50 + "\n")
+            f.write(f"FBP+TV  SSIM={avg['tv_ssim']:.4f}  PSNR={avg['tv_psnr']:.2f}\n")
+
     return avg if all_metrics else None
 
 
@@ -196,8 +202,8 @@ def main():
     #   cutoff_pct only  → contiguous limited-view
     #   step only        → sparse every-Nth within 75%
     #   both             → sparse every-Nth within cutoff_pct%
-    cutoff_pcts  = [None, 75,  75]   # e.g. [None, 75, 75]
-    sparse_steps = [10,   None, 10]  # e.g. [10,  None, 10]
+    cutoff_pcts  = [6.25, 12.5, 25, 50, 75, 100, 100, 100, 100, 100, 100, 6.25, 6.25, 12.5, 12.5, 25, 25, 75, 75]
+    sparse_steps = [None, None, None, None, None, None, 1, 2, 4, 8, 10, 8, 10, 8, 10, 8, 10, 8, 10]  # e.g. [10,  None, 10]
     # ─────────────────────────────────────────────────────────────────────────
 
     assert len(cutoff_pcts) == len(sparse_steps), "Lists must be the same length"
@@ -216,7 +222,7 @@ def main():
     print(f"{'Run':<4} {'Setting':<30} {'Angles':<8} {'SSIM':<10} {'PSNR':<10}")
     print("-" * 64)
     for i, (pct, step, avg) in summary.items():
-        cutoff = int(720 * (pct if pct is not None else 75) / 100)
+        cutoff = int(720 * (pct if pct is not None else 100) / 100)
         if step is None:
             n = cutoff
             tag = f"limited {pct}%"

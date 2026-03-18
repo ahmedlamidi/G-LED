@@ -157,22 +157,39 @@ def compare_slice(ct_slice_hu, mu_slice, vol_geom, proj_geom_full, full_angles,
     }
 
 
-def run_setting(cutoff_pct, data_path, detector_count, angle_step, total_series):
-    """Run FBP comparison for a limited-view setting (first cutoff_pct% of angles)."""
+def run_setting(detector_count, angle_step, total_series,
+                cutoff_pct=None, step=None):
+    """
+    cutoff_pct only : contiguous first N% of angles  (limited-view)
+    step only       : every Nth angle within first 75%  (sparse)
+    both            : every Nth angle within first cutoff_pct%  (sparse + limited-view)
+    """
+    import csv
     total_angles = 720
-    cutoff = int(total_angles * cutoff_pct / 100)
-    cond_indices = list(range(cutoff))
-    n_known = len(cond_indices)
+    cutoff = int(total_angles * (cutoff_pct if cutoff_pct is not None else 100) / 100)
 
+    if step is None:
+        cond_indices = list(range(cutoff))
+        label = f"limited_{cutoff_pct}pct"
+        desc = f"Limited view: first {cutoff_pct}% = {len(cond_indices)} of {total_angles} angles"
+    elif cutoff_pct is None:
+        cond_indices = [i for i in range(total_angles) if i % step == 0 and i < cutoff]
+        label = f"sparse_step{step}"
+        desc = f"Sparse: every {step}th angle within first 75% = {len(cond_indices)} of {total_angles} angles"
+    else:
+        cond_indices = [i for i in range(total_angles) if i % step == 0 and i < cutoff]
+        label = f"sparse_step{step}_cutoff{cutoff_pct}pct"
+        desc = f"Sparse+limited: every {step}th within first {cutoff_pct}% = {len(cond_indices)} of {total_angles} angles"
+
+    n_known = len(cond_indices)
     print(f"\n{'='*80}")
-    print(f"Limited view: first {cutoff_pct}% = {n_known} of {total_angles} angles")
+    print(desc)
     print(f"{'='*80}")
 
-    save_dir = f"Comparsion/FBP_limited_{cutoff_pct}pct_{n_known}of{total_angles}"
+    save_dir = f"Comparsion/FBP_{label}_{n_known}of{total_angles}"
     os.makedirs(save_dir, exist_ok=True)
 
     all_metrics = []
-    global_slice_idx = 0
 
     for s_idx, series in enumerate(total_series):
         vol_zyx, spacing = series
@@ -189,31 +206,35 @@ def run_setting(cutoff_pct, data_path, detector_count, angle_step, total_series)
 
             metrics = compare_slice(
                 ct_slice_hu, mu_slice, vol_geom, proj_geom_full, full_angles,
-                cond_indices, dx, detector_count, save_dir, global_slice_idx
+                cond_indices, dx, detector_count, save_dir, len(all_metrics)
             )
             all_metrics.append(metrics)
 
-            print(f"  Slice {global_slice_idx}: "
+            print(f"  Slice {len(all_metrics)-1}: "
                   f"Recon SSIM={metrics['recon_ssim']:.4f} PSNR={metrics['recon_psnr']:.2f} | "
                   f"DICOM SSIM={metrics['dicom_ssim']:.4f} PSNR={metrics['dicom_psnr']:.2f}")
 
-            global_slice_idx += 1
-
-    # Summary
     if all_metrics:
         avg = {k: np.mean([m[k] for m in all_metrics]) for k in all_metrics[0]}
-        print(f"\n--- {cutoff_pct}% Average over {len(all_metrics)} slices ---")
-        print(f"Sinogram       SSIM={avg['sino_ssim']:.4f}  PSNR={avg['sino_psnr']:.2f}")
-        print(f"Recon (mu)     SSIM={avg['recon_ssim']:.4f}  PSNR={avg['recon_psnr']:.2f}")
-        print(f"DICOM full-vs-limited SSIM={avg['dicom_ssim']:.4f}  PSNR={avg['dicom_psnr']:.2f}")
+        print(f"\n--- {label} average over {len(all_metrics)} slices ---")
+        print(f"Sinogram   SSIM={avg['sino_ssim']:.4f}  PSNR={avg['sino_psnr']:.2f}")
+        print(f"Recon (mu) SSIM={avg['recon_ssim']:.4f}  PSNR={avg['recon_psnr']:.2f}")
+        print(f"DICOM (HU) SSIM={avg['dicom_ssim']:.4f}  PSNR={avg['dicom_psnr']:.2f}")
 
-        import csv
         csv_path = os.path.join(save_dir, 'metrics.csv')
         with open(csv_path, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=['slice'] + list(all_metrics[0].keys()))
             writer.writeheader()
             for i, m in enumerate(all_metrics):
                 writer.writerow({'slice': i, **m})
+
+        summary_path = os.path.join(save_dir, 'summary.txt')
+        with open(summary_path, 'w') as f:
+            f.write(f"Summary — FBP {label} ({len(all_metrics)} slices)\n")
+            f.write("=" * 50 + "\n")
+            f.write(f"Sinogram   SSIM={avg['sino_ssim']:.4f}  PSNR={avg['sino_psnr']:.2f}\n")
+            f.write(f"Recon (mu) SSIM={avg['recon_ssim']:.4f}  PSNR={avg['recon_psnr']:.2f}\n")
+            f.write(f"DICOM (HU) SSIM={avg['dicom_ssim']:.4f}  PSNR={avg['dicom_psnr']:.2f}\n")
 
     return avg if all_metrics else None
 
@@ -226,26 +247,43 @@ def main():
     # Load test data once
     total_series = load_series_from(data_path)
 
-    cutoff_pcts = [100]
+    # ── Edit these two lists to configure runs ────────────────────────────────
+    # Each index is one run. Use None to leave that dimension unset.
+    #   cutoff_pct only  → contiguous limited-view
+    #   step only        → sparse every-Nth within 75%
+    #   both             → sparse every-Nth within cutoff_pct%
+    cutoff_pcts  = [6.25, 12.5, 25, 50, 75, 100, 100, 100, 100, 100, 100, 6.25, 6.25, 12.5, 12.5, 25, 25, 75, 75]
+    sparse_steps = [None, None, None, None, None, None, 1, 2, 4, 8, 10, 8, 10, 8, 10, 8, 10, 8, 10]
+    # ─────────────────────────────────────────────────────────────────────────
+
+    assert len(cutoff_pcts) == len(sparse_steps), "Lists must be the same length"
+
     summary = {}
 
-    for pct in cutoff_pcts:
-        avg = run_setting(pct, data_path, detector_count, angle_step, total_series)
+    for i, (pct, step) in enumerate(zip(cutoff_pcts, sparse_steps)):
+        avg = run_setting(detector_count, angle_step, total_series,
+                          cutoff_pct=pct, step=step)
         if avg:
-            summary[pct] = avg
+            summary[i] = (pct, step, avg)
 
-    # Print final comparison table
     print(f"\n{'='*80}")
-    print(f"FINAL COMPARISON — Limited View FBP")
+    print(f"FINAL COMPARISON — FBP")
     print(f"{'='*80}")
-    print(f"{'View %':<10} {'Angles':<10} {'Recon SSIM':<12} {'Recon PSNR':<12} {'DICOM SSIM':<12} {'DICOM PSNR':<12}")
-    print("-" * 68)
-    for pct in cutoff_pcts:
-        if pct in summary:
-            avg = summary[pct]
-            n = int(720 * pct / 100)
-            print(f"{pct:<10} {n:<10} {avg['recon_ssim']:<12.4f} {avg['recon_psnr']:<12.2f} "
-                  f"{avg['dicom_ssim']:<12.4f} {avg['dicom_psnr']:<12.2f}")
+    print(f"{'Run':<4} {'Setting':<30} {'Angles':<8} {'Recon SSIM':<12} {'Recon PSNR':<12} {'DICOM SSIM':<12} {'DICOM PSNR':<10}")
+    print("-" * 90)
+    for i, (pct, step, avg) in summary.items():
+        cutoff = int(720 * (pct if pct is not None else 100) / 100)
+        if step is None:
+            n = cutoff
+            tag = f"limited {pct}%"
+        elif pct is None:
+            n = len([j for j in range(720) if j % step == 0 and j < cutoff])
+            tag = f"sparse step={step}"
+        else:
+            n = len([j for j in range(720) if j % step == 0 and j < cutoff])
+            tag = f"step={step} cutoff={pct}%"
+        print(f"{i:<4} {tag:<30} {n:<8} {avg['recon_ssim']:<12.4f} {avg['recon_psnr']:<12.2f} "
+              f"{avg['dicom_ssim']:<12.4f} {avg['dicom_psnr']:<10.2f}")
 
 
 if __name__ == '__main__':
