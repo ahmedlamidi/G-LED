@@ -94,8 +94,13 @@ if __name__ == '__main__':
 	"""
 	Fetch dataset
 	"""
-	data_set = dicom_dataset(detector_count=816, angle_step=(360/720))
-	#1327
+	# Compute condition indices (must match train_diff.py)
+	sample_H = 720
+	cutoff = int(sample_H * 0.75)
+	cond_indices = [i for i in range(sample_H) if i % 4 == 0 and i < cutoff]
+
+	data_set = dicom_dataset(detector_count=816, angle_step=(360/720),
+	                         cond_indices=cond_indices)
  
 	data_loader = DataLoader(dataset=data_set,
 							 shuffle=diff_args.shuffle,
@@ -107,7 +112,7 @@ if __name__ == '__main__':
 	Create diffusion model
 	"""
 	unet1 = Unet3D(dim=diff_args.unet_dim,
-				   cond_images_channels=2,  # masked sinogram + binary mask
+				   cond_images_channels=3,  # masked sinogram + binary mask + FBP re-projection
 				   memory_efficient=True,
 				   dim_mults=(1, 2, 4, 8)).to(torch.device(diff_args.device))  #mid: mid channel (removed 8 to save memory)
 	image_sizes = (720)   # full sinogram height (no row extraction needed)

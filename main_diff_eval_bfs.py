@@ -107,7 +107,13 @@ if __name__ == '__main__':
 	"""
 	Fetch dataset
 	"""
-	data_set = dicom_dataset(data_path="data/test_data", detector_count=816, angle_step=(360/720))
+	# Compute condition indices (must match train_diff.py)
+	sample_H = 720
+	cutoff = int(sample_H * 0.75)
+	cond_indices = [i for i in range(sample_H) if i % 4 == 0 and i < cutoff]
+
+	data_set = dicom_dataset(data_path="data/test_data", detector_count=816, angle_step=(360/720),
+	                         cond_indices=cond_indices)
 	
 	data_loader = DataLoader(dataset=data_set, 
 							 shuffle=False,
@@ -126,7 +132,7 @@ if __name__ == '__main__':
 	# 	model.load_state_dict(torch.load(args_seq.current_model_save_path+'model_epoch_'+str(args_final.Nt_read),map_location=torch.device(args_final.device)))	
 	
 	unet1 = Unet3D(dim=args_diff.unet_dim,
-				   cond_images_channels=2,  # masked sinogram + binary mask
+				   cond_images_channels=3,  # masked sinogram + binary mask + FBP re-projection
 				   memory_efficient=True,
 				   dim_mults=(1, 2,4,8)).to(torch.device(args_diff.device))  #mid: mid channel
 	image_sizes = (720)   # full sinogram height

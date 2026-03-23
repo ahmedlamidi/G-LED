@@ -29,6 +29,67 @@ def visualize(ct_slice: np.ndarray):
 
 #Need to work on this to convert to different configs later
 # need to do the sampling using astra
+def compute_fbp_reprojection(sino_normalized, cond_indices,
+                              det_count=816, num_angles=720,
+                              DSO=1000, ODD=600):
+    """
+    Take a normalized sinogram, run FBP on known rows, then forward-project
+    back to all angles to get a coarse full-sinogram estimate.
+
+    sino_normalized: [num_angles, det_count] sinogram in [-1, 1]
+    cond_indices: list of known row indices
+    Returns: [num_angles, det_count] re-projected sinogram in [-1, 1]
+    """
+    # Extract known rows only
+    sparse_sino = sino_normalized[cond_indices, :].astype(np.float32)
+
+    # Full and sparse angle arrays
+    angles_full = np.linspace(0, 2 * np.pi, num_angles, endpoint=False).astype(np.float32)
+    angles_sparse = angles_full[cond_indices]
+
+    # Reconstruction grid
+    N_pix = 512
+    vol_geom = astra.create_vol_geom(N_pix, N_pix)
+
+    # --- FBP with sparse angles ---
+    proj_geom_sparse = astra.create_proj_geom(
+        'fanflat', 1.0, det_count, angles_sparse, DSO, ODD
+    )
+    rec_id = astra.data2d.create('-vol', vol_geom)
+    sino_id = astra.data2d.create('-sino', proj_geom_sparse, sparse_sino)
+
+    cfg = astra.astra_dict('FBP_CUDA')
+    cfg['ReconstructionDataId'] = rec_id
+    cfg['ProjectionDataId'] = sino_id
+    alg_id = astra.algorithm.create(cfg)
+    astra.algorithm.run(alg_id)
+    fbp_image = astra.data2d.get(rec_id)
+
+    astra.algorithm.delete(alg_id)
+    astra.data2d.delete(sino_id)
+    astra.data2d.delete(rec_id)
+
+    # --- Forward-project FBP image to full sinogram (all angles) ---
+    proj_geom_full = astra.create_proj_geom(
+        'fanflat', 1.0, det_count, angles_full, DSO, ODD
+    )
+    vol_id = astra.data2d.create('-vol', vol_geom, fbp_image)
+    proj_id = astra.create_projector('line_fanflat', proj_geom_full, vol_geom)
+    sino_id2, reproj_sino = astra.create_sino(vol_id, proj_id)
+
+    # Normalize to [-1, 1]
+    rmin, rmax = reproj_sino.min(), reproj_sino.max()
+    if rmax > rmin:
+        reproj_sino = 2.0 * (reproj_sino - rmin) / (rmax - rmin) - 1.0
+
+    # Cleanup
+    astra.data2d.delete(sino_id2)
+    astra.data2d.delete(vol_id)
+    astra.projector.delete(proj_id)
+
+    return reproj_sino.astype(np.float32)
+
+
 def convert_hu_to_mu(ct_slice):
     """Convert HU to linear attenuation coefficient (mu).
     mu_water ~ 0.02 mm^-1 at typical CT energies.
@@ -111,30 +172,34 @@ def load_series_from(path):
 #sinograms = [convert_sinogram(slice, spacing[0], spacing[1], spacing[2]) for slice in vol_zyx]
 
 class dicom_dataset(Dataset):
-    def __init__(self, data_path="data/Dataset", 
-                 detector_count=816, 
+    def __init__(self, data_path="data/Dataset",
+                 detector_count=816,
                  angle_step=(360/720),
-                 cache_dir="data/sino_cache"):
-        
+                 cache_dir="data/sino_cache",
+                 cond_indices=None):
+
         self.cache_dir = cache_dir
         os.makedirs(cache_dir, exist_ok=True)
         self.index_map = []  # list of cache file paths
-        
+        self.cond_indices = cond_indices
+
+        num_angles = int(360 / angle_step)
+
         total_series = load_series_from(data_path)
-        
+
         for s_idx, series in enumerate(total_series):
             vol_zyx, spacing = series
             for ind in range(len(vol_zyx)):
-                
+
                 cache_path = os.path.join(
-                    cache_dir, 
+                    cache_dir,
                     f"sino_s{s_idx}_i{ind}_d{detector_count}_a{angle_step:.4f}.npy"
                 )
-                
+
                 # Only compute if not already cached
                 if not os.path.exists(cache_path):
                     sino = convert_sinogram(
-                        vol_zyx[ind], 
+                        vol_zyx[ind],
                         spacing[0], spacing[1], spacing[2],
                         detector_count, angle_step
                     )
@@ -143,9 +208,26 @@ class dicom_dataset(Dataset):
                         sino = 2.0 * (sino - sino_min) / (sino_max - sino_min) - 1.0
                     np.save(cache_path, sino.astype(np.float32))
                     print(f"Cached {cache_path}")
-                
+
                 self.index_map.append(cache_path)
-        
+
+        # Cache FBP re-projections if cond_indices provided
+        self.fbp_map = []
+        if cond_indices is not None:
+            print("Caching FBP re-projections...")
+            for sino_path in tqdm(self.index_map, desc="FBP re-projection"):
+                fbp_path = sino_path.replace("sino_", "fbp_reproj_")
+                if not os.path.exists(fbp_path):
+                    sino = np.load(sino_path)
+                    fbp = compute_fbp_reprojection(
+                        sino, cond_indices,
+                        det_count=detector_count,
+                        num_angles=num_angles
+                    )
+                    np.save(fbp_path, fbp)
+                self.fbp_map.append(fbp_path)
+            print(f"FBP re-projections ready: {len(self.fbp_map)} cached")
+
         print(f"Dataset ready: {len(self.index_map)} sinograms")
 
     def __len__(self):
@@ -155,6 +237,11 @@ class dicom_dataset(Dataset):
         # Load single sinogram on demand — fast numpy load
         sino = np.load(self.index_map[index])                          # [H, W]
         sino = torch.from_numpy(sino).float().unsqueeze(0).unsqueeze(0) # [1, 1, H, W]
+
+        if self.fbp_map:
+            fbp = np.load(self.fbp_map[index])                          # [H, W]
+            fbp = torch.from_numpy(fbp).float().unsqueeze(0).unsqueeze(0) # [1, 1, H, W]
+            return sino, fbp
         return sino
     
 

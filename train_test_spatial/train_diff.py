@@ -105,25 +105,35 @@ def train_epoch(diff_args, seq_args, trainer, data_loader, down_sampler, up_samp
     cutoff = int(sample_H * 0.75)
     cond_indices = [i for i in range(sample_H) if i % 4 == 0 and i < cutoff]
 
-    for iteration, batch in tqdm(enumerate(data_loader)):
-        # batch shape: [B, T, C, H, W] = [B, 1, 1, 720, 816]
+    for iteration, batch_data in tqdm(enumerate(data_loader)):
+        # Unpack: batch [B, T, C, H, W], fbp_reproj [B, T, C, H, W]
+        if isinstance(batch_data, (list, tuple)):
+            batch, fbp_reproj = batch_data
+        else:
+            batch = batch_data
+            fbp_reproj = None
+
         H, W = batch.shape[-2], batch.shape[-1]
 
-        # Build mask-based conditioning: full-resolution 2-channel image
+        # Build mask-based conditioning: full-resolution
         # Channel 0: masked sinogram (known rows filled, zeros elsewhere)
         # Channel 1: binary mask (1 = known row, 0 = unknown row)
+        # Channel 2: FBP re-projection (coarse full-sinogram estimate)
         masked_sino = torch.zeros_like(batch)
         mask = torch.zeros_like(batch)
         masked_sino[..., cond_indices, :] = batch[..., cond_indices, :]
         mask[..., cond_indices, :] = 1.0
 
-        # Concatenate along channel dim: [B, T, 2, H, W]
-        batch_cond = torch.cat([masked_sino, mask], dim=2)
+        # Concatenate along channel dim
+        if fbp_reproj is not None:
+            batch_cond = torch.cat([masked_sino, mask, fbp_reproj], dim=2)  # [B, T, 3, H, W]
+        else:
+            batch_cond = torch.cat([masked_sino, mask], dim=2)  # [B, T, 2, H, W]
 
         # Target is the full sinogram: [B, T, 1, H, W]
         # Permute both to [B, C, T, H, W] for the diffusion model
         batch_label = batch.permute([0, 2, 1, 3, 4])       # [B, 1, T, H, W]
-        batch_cond  = batch_cond.permute([0, 2, 1, 3, 4])  # [B, 2, T, H, W]
+        batch_cond  = batch_cond.permute([0, 2, 1, 3, 4])  # [B, 3, T, H, W]
 
         result = trainer(
             batch_label,

@@ -44,7 +44,15 @@ def test_final(args_final,
 
     with torch.no_grad():
         print('total iterations:', len(data_loader))
-        for iteration, batch in tqdm(enumerate(data_loader)):
+        for iteration, batch_data in tqdm(enumerate(data_loader)):
+            # Unpack: batch [B, T, C, H, W], fbp_reproj [B, T, C, H, W]
+            if isinstance(batch_data, (list, tuple)):
+                batch, fbp_reproj = batch_data
+                fbp_reproj = fbp_reproj.to(args_final.device).float()
+            else:
+                batch = batch_data
+                fbp_reproj = None
+
             batch = batch.to(args_final.device).float()
             print(f"Original batch shape: {batch.shape}")
             b_size = batch.shape[0]
@@ -56,15 +64,19 @@ def test_final(args_final,
             cond_indices = [i for i in range(H) if i % 4 == 0 and i < cutoff]
 
             # Build mask-based conditioning (same as train_diff)
-            # Channel 0: masked sinogram, Channel 1: binary mask
+            # Channel 0: masked sinogram, Channel 1: binary mask, Channel 2: FBP re-projection
             masked_sino = torch.zeros_like(batch)
             mask = torch.zeros_like(batch)
             masked_sino[..., cond_indices, :] = batch[..., cond_indices, :]
             mask[..., cond_indices, :] = 1.0
-            batch_cond = torch.cat([masked_sino, mask], dim=2)  # [B, T, 2, H, W]
+
+            if fbp_reproj is not None:
+                batch_cond = torch.cat([masked_sino, mask, fbp_reproj], dim=2)  # [B, T, 3, H, W]
+            else:
+                batch_cond = torch.cat([masked_sino, mask], dim=2)  # [B, T, 2, H, W]
 
             # Permute to [B, C, T, H, W]
-            batch_cond_perm = batch_cond.permute(0, 2, 1, 3, 4)  # [B, 2, T, H, W]
+            batch_cond_perm = batch_cond.permute(0, 2, 1, 3, 4)  # [B, 3, T, H, W]
 
             # Create output directory
             seq_name = 'batch' + str(iteration)
