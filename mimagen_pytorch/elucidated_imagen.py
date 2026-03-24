@@ -108,7 +108,8 @@ class ElucidatedImagen(nn.Module):
             S_tmin=0.05,
             S_tmax=50,
             S_noise=1.003,
-            physics_loss_weight=1.0,  # weight for physics-informed loss: p(s, θ) = p(-s, θ + 180°)
+            physics_loss_weight=0.1,  # weight for physics-informed loss: p(s, θ) = p(-s, θ + 180°)
+            physics_sigma_threshold=1.0,  # only apply physics loss when sigma < this value
     ):
         super().__init__()
 
@@ -211,6 +212,7 @@ class ElucidatedImagen(nn.Module):
         # physics loss weight
         
         self.physics_loss_weight = physics_loss_weight
+        self.physics_sigma_threshold = physics_sigma_threshold
 
         # elucidating parameters
 
@@ -991,13 +993,17 @@ class ElucidatedImagen(nn.Module):
         )
 
         if can_compute_physics:
-            # Full-sinogram symmetry: p(θ, s) = p(θ + 180°, -s)
-            # With mask conditioning the model outputs the full sinogram,
-            # so we simply pair the first half of angles with the second half.
-            half = total_angles // 2
-            first_half  = denoised_images[..., :half, :]
-            second_half = denoised_images[..., half:, :]
-            physics_loss = F.mse_loss(first_half, torch.flip(second_half, dims=[-1]))
+            # Only enforce symmetry for samples with low noise (sigma < threshold),
+            # where the denoised prediction is meaningful.
+            low_noise_mask = sigmas < self.physics_sigma_threshold  # [B]
+
+            if low_noise_mask.any():
+                # Full-sinogram symmetry: p(θ, s) = p(θ + 180°, -s)
+                denoised_low = denoised_images[low_noise_mask]
+                half = total_angles // 2
+                first_half  = denoised_low[..., :half, :]
+                second_half = denoised_low[..., half:, :]
+                physics_loss = F.mse_loss(first_half, torch.flip(second_half, dims=[-1]))
 
         # ── Combine losses ────────────────────────────────────────────
         data_loss = losses.mean()
