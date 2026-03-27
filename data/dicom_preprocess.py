@@ -212,11 +212,16 @@ class dicom_dataset(Dataset):
                 self.index_map.append(cache_path)
 
         # Cache FBP re-projections if cond_indices provided
+        # Encode config into filename so stale caches aren't reused
         self.fbp_map = []
         if cond_indices is not None:
-            print("Caching FBP re-projections...")
+            n_cond = len(cond_indices)
+            max_ang = max(cond_indices)
+            step = cond_indices[1] - cond_indices[0] if len(cond_indices) > 1 else 0
+            fbp_tag = f"fbp_n{n_cond}_step{step}_max{max_ang}"
+            print(f"Caching FBP re-projections ({fbp_tag})...")
             for sino_path in tqdm(self.index_map, desc="FBP re-projection"):
-                fbp_path = sino_path.replace("sino_", "fbp_reproj_")
+                fbp_path = sino_path.replace("sino_", f"{fbp_tag}_")
                 if not os.path.exists(fbp_path):
                     sino = np.load(sino_path)
                     fbp = compute_fbp_reprojection(

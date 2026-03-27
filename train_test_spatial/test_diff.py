@@ -16,7 +16,8 @@ def test_final_overall(args_final,
                        args_diff,
                        trainer,
                        seq_model,
-                       data_loader):
+                       data_loader,
+                       cond_indices=None):
     test_final(args_final,
                args_seq,
                args_diff,
@@ -24,7 +25,8 @@ def test_final_overall(args_final,
                seq_model,
                data_loader,
                None,
-               None)
+               None,
+               cond_indices=cond_indices)
 
 
 def test_final(args_final,
@@ -35,7 +37,11 @@ def test_final(args_final,
                data_loader,
                down_sampler,
                up_sampler,
-               save_flag=True):
+               save_flag=True,
+               cond_indices=None):
+    if cond_indices is None:
+        raise ValueError("cond_indices must be provided — define it in main_diff_eval_bfs.py and pass it through")
+
     contour_dir = os.path.join(args_final.experiment_path, 'contour')
     os.makedirs(contour_dir, exist_ok=True)
 
@@ -58,10 +64,6 @@ def test_final(args_final,
             b_size = batch.shape[0]
             assert b_size == 1
             H, W = batch.shape[-2], batch.shape[-1]
-
-            # Same conditioning split as train_diff
-            cutoff = int(H * 0.75)
-            cond_indices = [i for i in range(H) if i % 4 == 0 and i < cutoff]
 
             # Build mask-based conditioning (same as train_diff)
             # Channel 0: masked sinogram, Channel 1: binary mask, Channel 2: FBP re-projection

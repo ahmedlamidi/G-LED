@@ -4,10 +4,42 @@ from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import peak_signal_noise_ratio as psnr
 import os
 import argparse
+import astra
+
+
+# --------------- ASTRA FBP helper ---------------
+
+def fbp_reconstruct_from_sinogram(sinogram, det_count=816, num_angles=720,
+                                   DSO=1000, ODD=600, N_pix=512):
+    """
+    FBP reconstruction from a sinogram (any normalization).
+    Uses the same fan-beam geometry as dicom_preprocess.
+    Returns a 2D CT reconstruction [N_pix, N_pix].
+    """
+    sinogram = np.ascontiguousarray(sinogram, dtype=np.float32)
+    angles = np.linspace(0, 2 * np.pi, num_angles, endpoint=False).astype(np.float32)
+
+    vol_geom = astra.create_vol_geom(N_pix, N_pix)
+    proj_geom = astra.create_proj_geom('fanflat', 1.0, det_count, angles, DSO, ODD)
+
+    sino_id = astra.data2d.create('-sino', proj_geom, sinogram)
+    rec_id = astra.data2d.create('-vol', vol_geom)
+
+    cfg = astra.astra_dict('FBP_CUDA')
+    cfg['ProjectionDataId'] = sino_id
+    cfg['ReconstructionDataId'] = rec_id
+    alg_id = astra.algorithm.create(cfg)
+    astra.algorithm.run(alg_id)
+    recon = astra.data2d.get(rec_id)
+
+    astra.algorithm.delete(alg_id)
+    astra.data2d.delete(sino_id)
+    astra.data2d.delete(rec_id)
+    return recon
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--base_folder",
-                    default='output/mar_11_horizontal_PIML_3/diffusion_folder/experiment_final_checkpoint_150/contour',
+                    default='output/mar_11_horizontal_PIML_5/diffusion_folder/experiment_final_checkpoint_150/contour',
                     help='Folder containing batch outputs from test_diff')
 args = parser.parse_args()
 
@@ -85,10 +117,31 @@ for batch_name in batch_folders:
         gen_known_norm = img_gen_norm[cond_indices, :]
         mse_known = np.mean((gt_known_norm - gen_known_norm) ** 2)
 
-        # Create comparison figure (2 rows x 3 cols)
-        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+        # --- FBP reconstruction: sinogram -> CT image ---
+        det_count = gt_full.shape[1]
+        num_angles = gt_full.shape[0]
 
-        # Row 1: Full images
+        recon_gt = fbp_reconstruct_from_sinogram(gt_full, det_count=det_count, num_angles=num_angles)
+        recon_pred = fbp_reconstruct_from_sinogram(img_generated, det_count=det_count, num_angles=num_angles)
+
+        # Normalize FBP reconstructions for metrics (using GT range)
+        fbp_min = recon_gt.min()
+        fbp_max = recon_gt.max()
+        if fbp_max > fbp_min:
+            recon_gt_norm = (recon_gt - fbp_min) / (fbp_max - fbp_min)
+            recon_pred_norm = (recon_pred - fbp_min) / (fbp_max - fbp_min)
+        else:
+            recon_gt_norm = recon_gt.copy()
+            recon_pred_norm = recon_pred.copy()
+
+        ssim_ct = ssim(recon_gt_norm, recon_pred_norm, data_range=1.0)
+        psnr_ct = psnr(recon_gt_norm, recon_pred_norm, data_range=1.0)
+        mse_ct = np.mean((recon_gt_norm - recon_pred_norm) ** 2)
+
+        # Create comparison figure (3 rows x 3 cols)
+        fig, axes = plt.subplots(3, 3, figsize=(18, 15))
+
+        # Row 1: Full sinograms
         axes[0, 0].imshow(gt_full_norm, cmap='gray', aspect='auto')
         axes[0, 0].set_title('Ground Truth (Full)')
         axes[0, 0].axis('off')
@@ -114,7 +167,21 @@ for batch_name in batch_folders:
         axes[1, 2].set_title(f'Absolute Error (Target)\nMSE={mse_target:.6f}')
         axes[1, 2].axis('off')
 
-        fig.suptitle(f'{batch_name} | Full SSIM: {ssim_full:.4f} | Target SSIM: {ssim_target:.4f} | Known MSE: {mse_known:.6f}',
+        # Row 3: FBP CT reconstructions
+        axes[2, 0].imshow(recon_gt_norm, cmap='gray')
+        axes[2, 0].set_title('FBP from GT Sinogram')
+        axes[2, 0].axis('off')
+
+        axes[2, 1].imshow(recon_pred_norm, cmap='gray')
+        axes[2, 1].set_title(f'FBP from Predicted\nSSIM={ssim_ct:.4f}, PSNR={psnr_ct:.2f}dB')
+        axes[2, 1].axis('off')
+
+        axes[2, 2].imshow(np.abs(recon_gt_norm - recon_pred_norm), cmap='hot')
+        axes[2, 2].set_title(f'FBP Absolute Error\nMSE={mse_ct:.6f}')
+        axes[2, 2].axis('off')
+
+        fig.suptitle(f'{batch_name} | Sino SSIM: {ssim_full:.4f} | Target SSIM: {ssim_target:.4f} | '
+                     f'CT SSIM: {ssim_ct:.4f} | Known MSE: {mse_known:.6f}',
                      fontsize=16, fontweight='bold')
         plt.tight_layout()
 
@@ -132,10 +199,14 @@ for batch_name in batch_folders:
             'psnr_target': psnr_target,
             'mse_target': mse_target,
             'mse_known': mse_known,
+            'ssim_ct': ssim_ct,
+            'psnr_ct': psnr_ct,
+            'mse_ct': mse_ct,
         })
 
         print(f"  Full SSIM={ssim_full:.4f}, PSNR={psnr_full:.2f}dB | "
               f"Target SSIM={ssim_target:.4f}, PSNR={psnr_target:.2f}dB | "
+              f"CT SSIM={ssim_ct:.4f}, PSNR={psnr_ct:.2f}dB | "
               f"Known MSE={mse_known:.6f} -> {output_path}")
 
     except FileNotFoundError as e:
@@ -149,31 +220,38 @@ for batch_name in batch_folders:
 metrics_path = os.path.join(comparison_output_folder, 'metrics.txt')
 with open(metrics_path, 'w') as f:
     f.write(f"{'Batch':<12} {'SSIM(full)':>11} {'PSNR(full)':>11} {'MSE(full)':>11} "
-            f"{'SSIM(tgt)':>10} {'PSNR(tgt)':>10} {'MSE(tgt)':>10} {'MSE(known)':>11}\n")
-    f.write("-" * 100 + "\n")
+            f"{'SSIM(tgt)':>10} {'PSNR(tgt)':>10} {'MSE(tgt)':>10} {'MSE(known)':>11} "
+            f"{'SSIM(CT)':>10} {'PSNR(CT)':>10} {'MSE(CT)':>10}\n")
+    f.write("-" * 140 + "\n")
     for m in metrics_list:
         f.write(f"{m['batch']:<12} {m['ssim_full']:>11.4f} {m['psnr_full']:>11.2f} {m['mse_full']:>11.6f} "
                 f"{m['ssim_target']:>10.4f} {m['psnr_target']:>10.2f} {m['mse_target']:>10.6f} "
-                f"{m['mse_known']:>11.6f}\n")
+                f"{m['mse_known']:>11.6f} "
+                f"{m['ssim_ct']:>10.4f} {m['psnr_ct']:>10.2f} {m['mse_ct']:>10.6f}\n")
 
     # Summary statistics
     if metrics_list:
-        f.write("-" * 100 + "\n")
+        f.write("-" * 140 + "\n")
         for key, label in [('ssim_full', 'SSIM (full)'),
                            ('psnr_full', 'PSNR (full)'),
                            ('mse_full', 'MSE (full)'),
                            ('ssim_target', 'SSIM (target)'),
                            ('psnr_target', 'PSNR (target)'),
                            ('mse_target', 'MSE (target)'),
-                           ('mse_known', 'MSE (known)')]:
+                           ('mse_known', 'MSE (known)'),
+                           ('ssim_ct', 'SSIM (CT)'),
+                           ('psnr_ct', 'PSNR (CT)'),
+                           ('mse_ct', 'MSE (CT)')]:
             vals = [m[key] for m in metrics_list]
             f.write(f"Mean {label}:\t{np.mean(vals):.4f}\n")
             f.write(f"Std  {label}:\t{np.std(vals):.4f}\n")
 
         print(f"\nSummary:")
-        for key, label in [('ssim_full', 'SSIM (full)'),
-                           ('ssim_target', 'SSIM (target)'),
-                           ('psnr_full', 'PSNR (full)'),
+        for key, label in [('ssim_full', 'SSIM (full sino)'),
+                           ('ssim_target', 'SSIM (target sino)'),
+                           ('ssim_ct', 'SSIM (CT recon)'),
+                           ('psnr_full', 'PSNR (full sino)'),
+                           ('psnr_ct', 'PSNR (CT recon)'),
                            ('mse_known', 'MSE (known)')]:
             vals = [m[key] for m in metrics_list]
             print(f"  {label}: mean={np.mean(vals):.4f}, std={np.std(vals):.4f}")

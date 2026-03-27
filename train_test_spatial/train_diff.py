@@ -13,7 +13,8 @@ def train_diff(diff_args,
 			   seq_args,
 			   trainer,
 			   data_loader,
-			   start_epoch=0):
+			   start_epoch=0,
+			   cond_indices=None):
 	# Load previous loss lists if resuming (support both old and new format)
 	total_loss_list, data_loss_list, physics_loss_list = [], [], []
 	
@@ -48,7 +49,7 @@ def train_diff(diff_args,
 								     	 mode=seq_args.coarse_mode)
 		up_sampler   = torch.nn.Upsample(size=[720, 448], 
 								     	 mode=seq_args.coarse_mode)
-		model, loss_components = train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler)
+		model, loss_components = train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler, cond_indices=cond_indices)
 		total_loss, data_loss, physics_loss = loss_components
 		
 		if epoch % 1 ==0 and epoch > 0:
@@ -95,15 +96,13 @@ def train_diff(diff_args,
 		print(f"Epoch {epoch}: Total Loss={total_loss:.6f}, Data Loss={data_loss:.6f}, Physics Loss={physics_loss:.6f}")
 
 
-def train_epoch(diff_args, seq_args, trainer, data_loader, down_sampler, up_sampler):
+def train_epoch(diff_args, seq_args, trainer, data_loader, down_sampler, up_sampler, cond_indices=None):
     loss_epoch = []
     data_loss_epoch = []
     physics_loss_epoch = []
 
-    # Pre-compute condition indices once (constant across all iterations)
-    sample_H = 720  # sinogram height from dataset
-    cutoff = int(sample_H * 0.75)
-    cond_indices = [i for i in range(sample_H) if i % 4 == 0 and i < cutoff]
+    if cond_indices is None:
+        raise ValueError("cond_indices must be provided — define it in main_diff_bfs.py and pass it through")
 
     for iteration, batch_data in tqdm(enumerate(data_loader)):
         # Unpack: batch [B, T, C, H, W], fbp_reproj [B, T, C, H, W]

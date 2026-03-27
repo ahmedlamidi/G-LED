@@ -32,7 +32,7 @@ class Args:
 		for finding the dynamics dir
 		"""
 		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/mar_11_horizontal_PIML_3',
+								 default='output/mar_11_horizontal_PIML_5',
 								 help='all the information of ks training')
 		"""
 		for diffusion model
@@ -96,8 +96,8 @@ if __name__ == '__main__':
 	"""
 	# Compute condition indices (must match train_diff.py)
 	sample_H = 720
-	cutoff = int(sample_H * 0.75)
-	cond_indices = [i for i in range(sample_H) if i % 4 == 0 and i < cutoff]
+	cutoff = int(sample_H * 0.5)
+	cond_indices = [i for i in range(sample_H) if i % 10 == 0 and i < cutoff]
 
 	data_set = dicom_dataset(detector_count=816, angle_step=(360/720),
 	                         cond_indices=cond_indices)
@@ -169,4 +169,5 @@ if __name__ == '__main__':
 	train_diff(diff_args=diff_args,
                seq_args=seq_args,
                trainer=trainer,
-               data_loader=data_loader)
+               data_loader=data_loader,
+               cond_indices=cond_indices)
