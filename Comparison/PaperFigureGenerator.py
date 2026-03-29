@@ -104,8 +104,8 @@ def save_ct_as_dicom(
     ds.RescaleSlope = "1"
     ds.RescaleType = "HU"
     ds.KVP = ""
-    ds.WindowCenter = "-600"
-    ds.WindowWidth = "1600"
+    ds.WindowCenter = "40"
+    ds.WindowWidth = "400"
 
     ds.SOPClassUID = CTImageStorage
     ds.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
