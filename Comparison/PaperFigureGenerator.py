@@ -237,63 +237,46 @@ def run_setting(detector_count, angle_step, total_series, dicom_dir,
     print(desc)
     print(f"{'='*80}")
 
-    all_metrics = []
-    first_slice_saved = False
+    # Use only the first slice from the first series
+    vol_zyx, spacing = total_series[0]
+    dx, dy, dz = spacing
+    H, W = vol_zyx[0].shape[:2]
 
-    for s_idx, series in enumerate(total_series):
-        vol_zyx, spacing = series
-        dx, dy, dz = spacing
-        H, W = vol_zyx[0].shape[:2]
+    vol_geom, proj_geom_full, full_angles = build_geometry(
+        H, W, dx, dy, detector_count, angle_step
+    )
 
-        vol_geom, proj_geom_full, full_angles = build_geometry(
-            H, W, dx, dy, detector_count, angle_step
+    ct_slice_hu = vol_zyx[0].astype(np.float32)
+    mu_slice = convert_hu_to_mu(ct_slice_hu)
+
+    metrics, recon_full_hu, recon_sparse_hu = process_slice(
+        ct_slice_hu, mu_slice, vol_geom, proj_geom_full, full_angles,
+        cond_indices, dx, detector_count
+    )
+
+    print(f"  Slice 0: "
+          f"Recon SSIM={metrics['recon_ssim']:.4f} PSNR={metrics['recon_psnr']:.2f} | "
+          f"HU SSIM={metrics['hu_ssim']:.4f} PSNR={metrics['hu_psnr']:.2f}")
+
+    # Save degraded reconstruction as DICOM
+    dcm_name = f"{label}_slice0.dcm"
+    save_ct_as_dicom(
+        recon_sparse_hu, spacing, dicom_dir, dcm_name,
+        series_description=f"FBP {desc}",
+    )
+    print(f"  -> Saved DICOM: {dcm_name}")
+
+    # Save full reference once
+    ref_name = "full_reference_slice0.dcm"
+    ref_path = dicom_dir / ref_name
+    if not ref_path.exists():
+        save_ct_as_dicom(
+            recon_full_hu, spacing, dicom_dir, ref_name,
+            series_description="FBP Full 720 angles (reference)",
         )
+        print(f"  -> Saved reference DICOM: {ref_name}")
 
-        for ind in range(len(vol_zyx)):
-            ct_slice_hu = vol_zyx[ind].astype(np.float32)
-            mu_slice = convert_hu_to_mu(ct_slice_hu)
-
-            metrics, recon_full_hu, recon_sparse_hu = process_slice(
-                ct_slice_hu, mu_slice, vol_geom, proj_geom_full, full_angles,
-                cond_indices, dx, detector_count
-            )
-            all_metrics.append(metrics)
-            slice_num = len(all_metrics) - 1
-
-            print(f"  Slice {slice_num}: "
-                  f"Recon SSIM={metrics['recon_ssim']:.4f} PSNR={metrics['recon_psnr']:.2f} | "
-                  f"HU SSIM={metrics['hu_ssim']:.4f} PSNR={metrics['hu_psnr']:.2f}")
-
-            # Save the first slice as DICOM
-            if not first_slice_saved:
-                # Save degraded reconstruction
-                dcm_name = f"{label}_slice0.dcm"
-                save_ct_as_dicom(
-                    recon_sparse_hu, spacing, dicom_dir, dcm_name,
-                    series_description=f"FBP {desc}",
-                )
-                print(f"  -> Saved DICOM: {dcm_name}")
-
-                # Also save the full reference for comparison
-                ref_name = f"full_reference_slice0.dcm"
-                ref_path = dicom_dir / ref_name
-                if not ref_path.exists():
-                    save_ct_as_dicom(
-                        recon_full_hu, spacing, dicom_dir, ref_name,
-                        series_description="FBP Full 720 angles (reference)",
-                    )
-                    print(f"  -> Saved reference DICOM: {ref_name}")
-
-                first_slice_saved = True
-
-    if all_metrics:
-        avg = {k: np.mean([m[k] for m in all_metrics]) for k in all_metrics[0]}
-        print(f"\n--- {label} average over {len(all_metrics)} slices ---")
-        print(f"  Recon (mu) SSIM={avg['recon_ssim']:.4f}  PSNR={avg['recon_psnr']:.2f}")
-        print(f"  DICOM (HU) SSIM={avg['hu_ssim']:.4f}  PSNR={avg['hu_psnr']:.2f}")
-        return label, n_known, avg
-
-    return label, n_known, None
+    return label, n_known, metrics
 
 
 def main():
@@ -301,7 +284,7 @@ def main():
     detector_count = 816
     angle_step = 360 / 720
 
-    dicom_dir = Path("Comparsion/PaperFigures_DICOM")
+    dicom_dir = Path("Comparison/PaperFigures_DICOM")
 
     total_series = load_series_from(data_path)
 
@@ -317,39 +300,37 @@ def main():
     results = []
 
     for step in sparse_steps:
-        label, n, avg = run_setting(
+        label, n, m = run_setting(
             detector_count, angle_step, total_series, dicom_dir,
             cutoff_pct=None, step=step
         )
-        if avg:
-            results.append((label, n, avg))
+        results.append((label, n, m))
 
     for pct in limited_pcts:
-        label, n, avg = run_setting(
+        label, n, m = run_setting(
             detector_count, angle_step, total_series, dicom_dir,
             cutoff_pct=pct, step=None
         )
-        if avg:
-            results.append((label, n, avg))
+        results.append((label, n, m))
 
     # ── Summary ───────────────────────────────────────────────────────────────
     print(f"\n{'='*80}")
-    print("FINAL SUMMARY")
+    print("FINAL SUMMARY (slice 0)")
     print(f"{'='*80}")
     print(f"{'Setting':<25} {'Angles':<8} {'Recon SSIM':<12} {'Recon PSNR':<12} {'HU SSIM':<12} {'HU PSNR':<10}")
     print("-" * 80)
-    for label, n, avg in results:
-        print(f"{label:<25} {n:<8} {avg['recon_ssim']:<12.4f} {avg['recon_psnr']:<12.2f} "
-              f"{avg['hu_ssim']:<12.4f} {avg['hu_psnr']:<10.2f}")
+    for label, n, m in results:
+        print(f"{label:<25} {n:<8} {m['recon_ssim']:<12.4f} {m['recon_psnr']:<12.2f} "
+              f"{m['hu_ssim']:<12.4f} {m['hu_psnr']:<10.2f}")
 
     # Save summary CSV
     csv_path = dicom_dir / "summary.csv"
     with open(csv_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['setting', 'num_angles', 'recon_ssim', 'recon_psnr', 'hu_ssim', 'hu_psnr'])
-        for label, n, avg in results:
-            writer.writerow([label, n, avg['recon_ssim'], avg['recon_psnr'],
-                             avg['hu_ssim'], avg['hu_psnr']])
+        for label, n, m in results:
+            writer.writerow([label, n, m['recon_ssim'], m['recon_psnr'],
+                             m['hu_ssim'], m['hu_psnr']])
 
     print(f"\nDICOM files and summary saved to: {dicom_dir}")
 
