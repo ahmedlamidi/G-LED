@@ -27,7 +27,7 @@ nvidia-smi
 # srun python compare_ssim.py
 #to start from saved model
 
-srun python Comparison/FBP_TV.py
+srun python Comparison/PaperFigureGenerator.py
 # srun python data/dicom_preprocess.py
 # srun python main_diff_eval_bfs.py
 # srun python saved_ground_truth.py
