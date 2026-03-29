@@ -252,8 +252,8 @@ def main():
     #   cutoff_pct only  → contiguous limited-view
     #   step only        → sparse every-Nth within 75%
     #   both             → sparse every-Nth within cutoff_pct%
-    cutoff_pcts  = [6.25, 12.5, 25, 50, 75, 100, 100, 100, 100, 100, 100, 6.25, 6.25, 12.5, 12.5, 25, 25, 75, 75]
-    sparse_steps = [None, None, None, None, None, None, 1, 2, 4, 8, 10, 8, 10, 8, 10, 8, 10, 8, 10]
+    cutoff_pcts  = [6.25, 12.5, 25, 50, 75, 100, 100, 100, 100, 100, 100, 6.25, 6.25, 12.5, 12.5, 25, 25,50, 50 ,75, 75]
+    sparse_steps = [None, None, None, None, None, None, 1, 2, 4, 8, 10, 8, 10, 8, 10, 8, 10, 8, 10, 8, 10]
     # ─────────────────────────────────────────────────────────────────────────
 
     assert len(cutoff_pcts) == len(sparse_steps), "Lists must be the same length"

@@ -1,9 +1,9 @@
 #!/bin/bash -l
 #SBATCH --job-name=ddpm-chest
-#SBATCH -p Quick
+#SBATCH -p general
 #SBATCH --cpus-per-task=2
 #SBATCH --time=24:00:00
-#SBATCH --gres=gpu:A40:1
+#SBATCH --gres=gpu:1
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=ahmedlamidi@usf.edu
 #SBATCH --mem=64G
@@ -27,7 +27,7 @@ nvidia-smi
 # srun python compare_ssim.py
 #to start from saved model
 
-srun python main_diff_bfs.py
+srun python Comparison/FBP_TV.py
 # srun python data/dicom_preprocess.py
 # srun python main_diff_eval_bfs.py
 # srun python saved_ground_truth.py
