@@ -16,3 +16,4 @@ torch
 astra-toolbox
 wandb
 dotenv
+imageio
