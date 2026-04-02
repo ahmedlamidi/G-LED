@@ -172,11 +172,16 @@ def load_series_from(path):
 #sinograms = [convert_sinogram(slice, spacing[0], spacing[1], spacing[2]) for slice in vol_zyx]
 
 class dicom_dataset(Dataset):
+
     def __init__(self, data_path="data/Dataset",
                  detector_count=816,
                  angle_step=(360/720),
                  cache_dir="data/sino_cache",
                  cond_indices=None):
+
+        # Sanitize data_path for use in directory name
+        def sanitize_path(path):
+            return path.strip().replace("/", "_").replace("\\", "_")
 
         self.cache_dir = cache_dir
         os.makedirs(cache_dir, exist_ok=True)
@@ -187,13 +192,15 @@ class dicom_dataset(Dataset):
 
         total_series = load_series_from(data_path)
 
+        sanitized_data_path = sanitize_path(data_path)
+
         for s_idx, series in enumerate(total_series):
             vol_zyx, spacing = series
             for ind in range(len(vol_zyx)):
 
                 cache_path = os.path.join(
                     cache_dir,
-                    f"sino_s{s_idx}_i{ind}_d{detector_count}_a{angle_step:.4f}.npy"
+                    f"sino_{sanitized_data_path}_s{s_idx}_i{ind}_d{detector_count}_a{angle_step:.4f}.npy"
                 )
 
                 # Only compute if not already cached
@@ -212,16 +219,19 @@ class dicom_dataset(Dataset):
                 self.index_map.append(cache_path)
 
         # Cache FBP re-projections if cond_indices provided
-        # Encode config into filename so stale caches aren't reused
+        # Encode config and data_path into filename so stale caches aren't reused
         self.fbp_map = []
         if cond_indices is not None:
             n_cond = len(cond_indices)
             max_ang = max(cond_indices)
             step = cond_indices[1] - cond_indices[0] if len(cond_indices) > 1 else 0
-            fbp_tag = f"fbp_n{n_cond}_step{step}_max{max_ang}"
-            print(f"Caching FBP re-projections ({fbp_tag})...")
+            fbp_tag = f"fbp_{sanitized_data_path}_n{n_cond}_step{step}_max{max_ang}"
+            fbp_cache_dir = os.path.join("data", f"{fbp_tag}_cache")
+            os.makedirs(fbp_cache_dir, exist_ok=True)
+            print(f"Caching FBP re-projections ({fbp_tag}) in {fbp_cache_dir} ...")
             for sino_path in tqdm(self.index_map, desc="FBP re-projection"):
-                fbp_path = sino_path.replace("sino_", f"{fbp_tag}_")
+                base_name = os.path.basename(sino_path).replace("sino_", f"{fbp_tag}_")
+                fbp_path = os.path.join(fbp_cache_dir, base_name)
                 if not os.path.exists(fbp_path):
                     sino = np.load(sino_path)
                     fbp = compute_fbp_reprojection(
