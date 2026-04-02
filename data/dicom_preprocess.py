@@ -192,16 +192,15 @@ class dicom_dataset(Dataset):
 
         total_series = load_series_from(data_path)
 
-        sanitized_data_path = sanitize_path(data_path)
 
         for s_idx, series in enumerate(total_series):
             vol_zyx, spacing = series
             for ind in range(len(vol_zyx)):
-
-                cache_path = os.path.join(
-                    cache_dir,
-                    f"sino_{sanitized_data_path}_s{s_idx}_i{ind}_d{detector_count}_a{angle_step:.4f}.npy"
-                )
+                if data_path == "data/Dataset":
+                    cache_filename = f"sino_s{s_idx}_i{ind}_d{detector_count}_a{angle_step:.4f}.npy"
+                else:
+                    cache_filename = f"sino_{sanitize_path(data_path)}_s{s_idx}_i{ind}_d{detector_count}_a{angle_step:.4f}.npy"
+                cache_path = os.path.join(cache_dir, cache_filename)
 
                 # Only compute if not already cached
                 if not os.path.exists(cache_path):
@@ -225,13 +224,20 @@ class dicom_dataset(Dataset):
             n_cond = len(cond_indices)
             max_ang = max(cond_indices)
             step = cond_indices[1] - cond_indices[0] if len(cond_indices) > 1 else 0
-            fbp_tag = f"fbp_{sanitized_data_path}_n{n_cond}_step{step}_max{max_ang}"
+            if data_path == "data/Dataset":
+                fbp_tag = f"fbp_n{n_cond}_step{step}_max{max_ang}"
+            else:
+                fbp_tag = f"fbp_{sanitize_path(data_path)}_n{n_cond}_step{step}_max{max_ang}"
             fbp_cache_dir = os.path.join("data", f"{fbp_tag}_cache")
             os.makedirs(fbp_cache_dir, exist_ok=True)
             print(f"Caching FBP re-projections ({fbp_tag}) in {fbp_cache_dir} ...")
             for sino_path in tqdm(self.index_map, desc="FBP re-projection"):
-                base_name = os.path.basename(sino_path).replace("sino_", f"{fbp_tag}_")
-                fbp_path = os.path.join(fbp_cache_dir, base_name)
+                base_name = os.path.basename(sino_path)
+                if data_path == "data/Dataset":
+                    fbp_base_name = base_name.replace("sino_", f"{fbp_tag}_")
+                else:
+                    fbp_base_name = base_name.replace("sino_", f"{fbp_tag}_")
+                fbp_path = os.path.join(fbp_cache_dir, fbp_base_name)
                 if not os.path.exists(fbp_path):
                     sino = np.load(sino_path)
                     fbp = compute_fbp_reprojection(
