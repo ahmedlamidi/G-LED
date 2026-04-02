@@ -28,7 +28,7 @@ class Args_final_eval:
 		for finding the dynamics dir
 		"""
 		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/mar_11_horizontal_PIML_5',
+								 default='output/Sparse_8_limited_90',
 								 help='all the information of bfs training')
 		
 		"""
@@ -109,8 +109,13 @@ if __name__ == '__main__':
 	"""
 	# Compute condition indices (must match train_diff.py)
 	sample_H = 720
-	cutoff = int(sample_H * 0.5)
-	cond_indices = [i for i in range(sample_H) if i % 10 == 0 and i < cutoff]
+	angle_step_deg = 360 / sample_H  # 0.5 degrees per index
+	angle_start = 240
+	angle_end = 330
+	angle_stride = 8  # take every Nth index (1 = all, 10 = every 5 degrees)
+	start_idx = int(angle_start / angle_step_deg)  # 480
+	end_idx = int(angle_end / angle_step_deg)      # 660
+	cond_indices = list(range(start_idx, end_idx, angle_stride))
 
 	data_set = dicom_dataset(data_path="data/test_data", detector_count=816, angle_step=(360/720),
 	                         cond_indices=cond_indices)
