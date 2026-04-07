@@ -237,8 +237,15 @@ def run_setting(detector_count, angle_step, total_series, dicom_dir,
     print(desc)
     print(f"{'='*80}")
 
+
     # Use only the first slice from the first series
     vol_zyx, spacing = total_series[0]
+    # Print shape and type for debug
+    print(f"First series shape: {vol_zyx.shape if hasattr(vol_zyx, 'shape') else type(vol_zyx)}")
+    print(f"Spacing: {spacing}")
+    # Try to print the file name if possible (if available in vol_zyx or total_series)
+    # If using SimpleITK, the file name is not directly available, so print index info
+    print("Using first slice (index 0) from first series (index 0) for all processing.")
     dx, dy, dz = spacing
     H, W = vol_zyx[0].shape[:2]
 
@@ -288,6 +295,7 @@ def main():
 
     total_series = load_series_from(data_path)
 
+
     # ── Settings ──────────────────────────────────────────────────────────────
     # Sparse view: every Nth angle across full 360°
     sparse_steps = [2, 4, 8, 10]
@@ -295,10 +303,14 @@ def main():
     # Limited view: contiguous angles (percentage of 360°)
     #   180° = 50%, 90° = 25%, 45° = 12.5%
     limited_pcts = [50, 25, 12.5]
+    # Limited and sparse for 90° (25%)
+    limited_sparse_pct = 25
+    limited_sparse_steps = [2, 4, 8, 10]
     # ──────────────────────────────────────────────────────────────────────────
 
     results = []
 
+    # Sparse view (full 360°)
     for step in sparse_steps:
         label, n, m = run_setting(
             detector_count, angle_step, total_series, dicom_dir,
@@ -306,12 +318,63 @@ def main():
         )
         results.append((label, n, m))
 
+    # Limited view (contiguous)
     for pct in limited_pcts:
         label, n, m = run_setting(
             detector_count, angle_step, total_series, dicom_dir,
             cutoff_pct=pct, step=None
         )
         results.append((label, n, m))
+
+    # Limited and sparse for 90° (25%)
+    total_angles = 720
+    cutoff = int(total_angles * limited_sparse_pct / 100)
+    for step in limited_sparse_steps:
+        cond_indices = list(range(0, cutoff, step))
+        label = f"limited{limited_sparse_pct}pct_sparse_step{step}"
+        desc = f"Limited {limited_sparse_pct}% (90°) and sparse step {step}: {len(cond_indices)} of {total_angles} angles"
+
+        # Use only the first slice from the first series
+        vol_zyx, spacing = total_series[0]
+        dx, dy, dz = spacing
+        H, W = vol_zyx[0].shape[:2]
+        vol_geom, proj_geom_full, full_angles = build_geometry(
+            H, W, dx, dy, detector_count, angle_step
+        )
+        ct_slice_hu = vol_zyx[0].astype(np.float32)
+        mu_slice = convert_hu_to_mu(ct_slice_hu)
+
+        metrics, recon_full_hu, recon_sparse_hu = process_slice(
+            ct_slice_hu, mu_slice, vol_geom, proj_geom_full, full_angles,
+            cond_indices, dx, detector_count
+        )
+
+        print(f"\n{'='*80}")
+        print(desc)
+        print(f"{'='*80}")
+        print(f"  Slice 0: "
+              f"Recon SSIM={metrics['recon_ssim']:.4f} PSNR={metrics['recon_psnr']:.2f} | "
+              f"HU SSIM={metrics['hu_ssim']:.4f} PSNR={metrics['hu_psnr']:.2f}")
+
+        # Save degraded reconstruction as DICOM
+        dcm_name = f"{label}_slice0.dcm"
+        save_ct_as_dicom(
+            recon_sparse_hu, spacing, dicom_dir, dcm_name,
+            series_description=f"FBP {desc}",
+        )
+        print(f"  -> Saved DICOM: {dcm_name}")
+
+        # Save full reference once
+        ref_name = "full_reference_slice0.dcm"
+        ref_path = dicom_dir / ref_name
+        if not ref_path.exists():
+            save_ct_as_dicom(
+                recon_full_hu, spacing, dicom_dir, ref_name,
+                series_description="FBP Full 720 angles (reference)",
+            )
+            print(f"  -> Saved reference DICOM: {ref_name}")
+
+        results.append((label, len(cond_indices), metrics))
 
     # ── Summary ───────────────────────────────────────────────────────────────
     print(f"\n{'='*80}")

@@ -16,3 +16,5 @@ __pycache__/
 wandb/
 Comparsion/*
 !Comparsion/*.py
+/output_old
+ModelBestCheckPoints.zip
