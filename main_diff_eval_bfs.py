@@ -28,7 +28,7 @@ class Args_final_eval:
 		for finding the dynamics dir
 		"""
 		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/Sparse_8_limited_90',
+								 default='output/LimitedView45Sparse10',
 								 help='all the information of bfs training')
 		
 		"""
@@ -99,10 +99,10 @@ if __name__ == '__main__':
 	"""
 	args_final = Args_final_eval()
 	args_final = args_final.update_args()	
-	args_seq  = read_args_txt(Args_seq(), 
-							  args_final.seq_args_txt)
-	args_diff = read_args_txt(Args_diff(), 
-							  args_final.diff_args_txt)
+	# args_seq  = read_args_txt(Args_seq(), 
+	# 						  args_final.seq_args_txt)
+	# args_diff = read_args_txt(Args_diff(), 
+	# 						  args_final.diff_args_txt)
 	
 	"""
 	Fetch dataset
@@ -110,15 +110,14 @@ if __name__ == '__main__':
 	# Compute condition indices (must match train_diff.py)
 	sample_H = 720
 	angle_step_deg = 360 / sample_H  # 0.5 degrees per index
-	angle_start = 240
+	angle_start = 285
 	angle_end = 330
-	angle_stride = 8  # take every Nth index (1 = all, 10 = every 5 degrees)
-	start_idx = int(angle_start / angle_step_deg)  # 480
-	end_idx = int(angle_end / angle_step_deg)      # 660
+	angle_stride = 10
+	start_idx = int(angle_start / angle_step_deg)
+	end_idx = int(angle_end / angle_step_deg)
 	cond_indices = list(range(start_idx, end_idx, angle_stride))
-
-	data_set = dicom_dataset(data_path="data/test_data", detector_count=816, angle_step=(360/720),
-	                         cond_indices=cond_indices)
+	data_set = dicom_dataset(data_path="data/extra_data", detector_count=816, angle_step=(360/720),
+								cond_indices=cond_indices)
 	
 	data_loader = DataLoader(dataset=data_set, 
 							 shuffle=False,
@@ -136,10 +135,10 @@ if __name__ == '__main__':
 	# else:
 	# 	model.load_state_dict(torch.load(args_seq.current_model_save_path+'model_epoch_'+str(args_final.Nt_read),map_location=torch.device(args_final.device)))	
 	
-	unet1 = Unet3D(dim=args_diff.unet_dim,
+	unet1 = Unet3D(dim=32,
 				   cond_images_channels=3,  # masked sinogram + binary mask + FBP re-projection
 				   memory_efficient=True,
-				   dim_mults=(1, 2,4,8)).to(torch.device(args_diff.device))  #mid: mid channel
+				   dim_mults=(1, 2,4,8)).to(torch.device("cuda:0"))  #mid: mid channel
 	image_sizes = (720)   # full sinogram height
 	image_width = (816)
 	imagen = ElucidatedImagen(
@@ -148,7 +147,7 @@ if __name__ == '__main__':
             image_width = image_width,   
             channels = 1,   # Han Gao add the input to this args explicity     
             random_crop_sizes = None,
-            num_sample_steps = args_diff.num_sample_steps, # original is 10
+            num_sample_steps = 20, # original is 10
             cond_drop_prob = 0.1,
             sigma_min = 0.002,
             sigma_max = (80),      # max noise level, double the max noise level for upsampler  （80，160）
@@ -162,12 +161,12 @@ if __name__ == '__main__':
             S_noise = 1.003,
             condition_on_text = False,
             auto_normalize_img = False  # Han Gao make it false
-            ).to(torch.device(args_final.device))
-	trainer = ImagenTrainer(imagen, device =torch.device(args_final.device))
-	trainer.load(path=args_diff.model_save_path+'/best_model_sofar')
+            ).to(torch.device("cuda:0"))
+	trainer = ImagenTrainer(imagen, device =torch.device("cuda:0"), fp16=True)
+	trainer.load(path=args_final.bfs_dynamic_folder+'/best_model_sofar')
 	test_final_overall(args_final,
-					   args_seq,
-					   args_diff,
+					   None,
+					   None,
 					   trainer,
 					   None,
 					   data_loader,

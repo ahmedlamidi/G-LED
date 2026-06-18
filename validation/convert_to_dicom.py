@@ -1,9 +1,11 @@
 import os
 from pathlib import Path
+import argparse
 import numpy as np
 import astra
 import datetime
 import SimpleITK as sitk
+from matplotlib import pyplot as plt
 from pydicom.dataset import Dataset, FileDataset
 from pydicom.uid import generate_uid, CTImageStorage, ExplicitVRLittleEndian
 from skimage.metrics import structural_similarity as ssim
@@ -373,9 +375,120 @@ def process_batch(batch_folder, output_dir, sino_min, sino_max, spacing=(1.0, 1.
     return recon_hu, combined
 
 
+def load_dicom_hu_slice(dicom_path):
+    """Load a single DICOM file and return HU image and spacing (dz, dy, dx)."""
+    img = sitk.ReadImage(str(dicom_path))
+    vol_zyx = sitk.GetArrayFromImage(img)
+    spacing_x, spacing_y, spacing_z = img.GetSpacing()
+
+    if vol_zyx.ndim == 3:
+        ct = vol_zyx[0].astype(np.float32)
+    else:
+        ct = np.asarray(vol_zyx, dtype=np.float32)
+
+    return ct, (float(spacing_z), float(spacing_y), float(spacing_x))
+
+
+def save_visualizations(input_hu, recon_hu, sinogram, output_dir, window_center=-600.0, window_width=1600.0):
+    """Save sinogram and side-by-side input/reconstruction visualizations."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    np.save(output_dir / "sinogram.npy", sinogram.astype(np.float32))
+
+    s_lo, s_hi = np.percentile(sinogram, [1, 99])
+    plt.figure(figsize=(10, 4))
+    plt.imshow(sinogram, cmap="gray", aspect="auto", vmin=s_lo, vmax=s_hi)
+    plt.title("Generated Sinogram")
+    plt.colorbar(label="Line Integral")
+    plt.xlabel("Detector")
+    plt.ylabel("Angle")
+    plt.tight_layout()
+    plt.savefig(output_dir / "sinogram.png", dpi=150)
+    plt.close()
+
+    vmin = window_center - window_width / 2.0
+    vmax = window_center + window_width / 2.0
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+    axes[0].imshow(input_hu, cmap="gray", vmin=vmin, vmax=vmax)
+    axes[0].set_title("Original DICOM")
+    axes[0].axis("off")
+
+    axes[1].imshow(recon_hu, cmap="gray", vmin=vmin, vmax=vmax)
+    axes[1].set_title("Reconstructed from Sinogram")
+    axes[1].axis("off")
+
+    fig.suptitle(f"Window Center={window_center}, Width={window_width}")
+    plt.tight_layout()
+    fig.savefig(output_dir / "dicom_to_dicom_comparison.png", dpi=150)
+    fig.savefig(output_dir / "dicom_to_dicom_comparison.pdf")
+    plt.close(fig)
+
+
+def run_single_dicom_pipeline(input_dicom, output_dir, detector_count=816, angle_step=360/720, window_center=-600.0, window_width=1600.0):
+    """
+    DICOM -> sinogram -> FBP reconstruction -> reconstructed DICOM + visualizations.
+    Uses the same forward projector and FBP settings as this module.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    input_hu, spacing_dzyx = load_dicom_hu_slice(input_dicom)
+    dz, dy, dx = spacing_dzyx
+
+    print(f"Loaded input DICOM: {input_dicom}")
+    print(f"Input shape: {input_hu.shape}, spacing (dz,dy,dx)=({dz:.4f},{dy:.4f},{dx:.4f})")
+
+    sinogram = create_sinogram_from_dicom(input_hu, dx, dy)
+    recon_mu = projection(sinogram, (dx, dy, dz), ct_dims=input_hu.shape)
+    recon_hu = convert_mu_to_hu_recon(recon_mu)
+    recon_hu = np.nan_to_num(recon_hu, nan=-1024, posinf=3071, neginf=-1024)
+
+    reconstructed_dicom = save_ct_volume_as_dicom(
+        recon_hu,
+        (dz, dy, dx),
+        output_dir,
+        "reconstructed_from_sinogram.dcm",
+        patient_id="Reconstructed",
+        series_description="DICOM to DICOM Reconstruction",
+    )
+
+    save_visualizations(
+        input_hu,
+        recon_hu,
+        sinogram,
+        output_dir,
+        window_center=window_center,
+        window_width=window_width,
+    )
+
+    print(f"Saved reconstructed DICOM: {reconstructed_dicom}")
+    print(f"Saved visuals in: {output_dir}")
+
+
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="DICOM conversion utilities")
+    parser.add_argument("--mode", choices=["single", "batch"], default="single", help="Run single DICOM->DICOM pipeline or legacy batch pipeline.")
+    parser.add_argument("--input_dicom", default="data/extra_data/1-062.dcm", help="Input DICOM path for --mode single.")
+    parser.add_argument("--output_dir", default="output/dicom_to_dicom", help="Output directory for --mode single.")
+    parser.add_argument("--window_center", type=float, default=-600.0, help="Display window center for saved visualizations.")
+    parser.add_argument("--window_width", type=float, default=1600.0, help="Display window width for saved visualizations.")
+    parser.add_argument("--base_folder", default='output/mar_3_720_820_horizontal_step/diffusion_folder/experiment_final_checkpoint_150/contour', help="Base folder for --mode batch.")
+    parser.add_argument("--gt_data_path", default="data/test_data", help="Ground-truth DICOM folder for --mode batch.")
+    args = parser.parse_args()
+
+    if args.mode == "single":
+        run_single_dicom_pipeline(
+            input_dicom=args.input_dicom,
+            output_dir=args.output_dir,
+            window_center=args.window_center,
+            window_width=args.window_width,
+        )
+        raise SystemExit(0)
+
     # Base folder containing all batch folders (generated outputs)
-    base_folder = 'output/mar_3_720_820_horizontal_step/diffusion_folder/experiment_final_checkpoint_150/contour'
+    base_folder = args.base_folder
     
     # Output folder for all DICOM files (in experiment_final)
     dicom_output_folder = Path('output/mar_3_720_820_horizontal_step/diffusion_folder/experiment_final_checkpoint_150/dicom_output')
@@ -383,7 +496,7 @@ if __name__ == '__main__':
     
     # Load ground truth sinograms from Dataset to get actual min/max values and CT dimensions
     print("Loading ground truth sinograms from Dataset...")
-    gt_sinograms, sino_ranges, spacing, ct_dims = get_ground_truth_sinograms("data/test_data", num_slices=20)
+    gt_sinograms, sino_ranges, spacing, ct_dims = get_ground_truth_sinograms(args.gt_data_path, num_slices=20)
     print(f"Loaded {len(gt_sinograms)} ground truth sinograms")
     
     # Get all batch folders and sort them

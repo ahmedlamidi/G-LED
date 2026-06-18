@@ -39,7 +39,7 @@ def fbp_reconstruct_from_sinogram(sinogram, det_count=816, num_angles=720,
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--base_folder",
-                    default='output/mar_11_horizontal_PIML_5/diffusion_folder/experiment_final_checkpoint_150/contour',
+                    default='output/Sparse2/diffusion_folder/experiment_final_checkpoint_150/contour',
                     help='Folder containing batch outputs from test_diff')
 args = parser.parse_args()
 
