@@ -2,6 +2,7 @@ import argparse
 import pdb
 import os
 import sys
+import json
 from torch.utils.data import DataLoader
 import torch
 
@@ -21,84 +22,62 @@ from dicom_preprocess import dicom_dataset
 
 
 
-class Args_final_eval:
-	def __init__(self):
-		self.parser = argparse.ArgumentParser()
-		"""
-		for finding the dynamics dir
-		"""
-		self.parser.add_argument("--bfs_dynamic_folder", 
-								 default='output/LimitedView45Sparse10',
-								 help='all the information of bfs training')
-		
-		"""
-		reading the seq model
-		"""
-		self.parser.add_argument("--Nt_read",
-								 default = 40,
-								 help = "Which Nt model we need to read")
-		self.parser.add_argument("--use_best",
-								 default = True)
-		"""
-		reading the diffusion model
-		"""
-		self.parser.add_argument("--Nepoch_read",
-								 default = 2,
-								 help = "Which epoch model we need to read")
-
-		"""
-		for dataset
-		"""
-		self.parser.add_argument("--trajec_max_len", 
-								 default=151,
-								 help = 'max seq_length (per seq) to test the model')
-		self.parser.add_argument("--start_n", 
-								 default=9500, 
-								 help = 'the starting step of the data')
-		self.parser.add_argument("--n_span",
-								 default=152,
-								 help='the total step of the data from the staring step')
-
-		"""
-		for seq_net_eval
-		"""
-		self.parser.add_argument("--test_Nt", 
-								 default=1,
-								 help = 'How many step you want to proceed! Should be divided by 10')
-		
-
-
-		
-		"""
-		for eval dataset hyperparameter
-		"""
-		self.parser.add_argument("--batch_size", default = 1)
-		self.parser.add_argument("--device", type=str, default = "cuda:0")
-		
-
-
-	def update_args(self):
-		args = self.parser.parse_args()
-		args.seq_args_txt  = os.path.join(args.bfs_dynamic_folder,
-										 'logging','args.txt' )
-		args.diff_args_txt = os.path.join(args.bfs_dynamic_folder,
-										 'diffusion_folder',
-										 'logging','args.txt')
-		
-		# output dataset
-		args.experiment_path = os.path.join(args.bfs_dynamic_folder,
-											'diffusion_folder',
-											'experiment_final_checkpoint_150')
-		if not os.path.isdir(args.experiment_path):
-			os.makedirs(args.experiment_path)
-		return args
+def load_config(config_file='configurations/Limited45Sparse10.json'):
+	"""
+	Load configuration from JSON file with optional command-line overrides
+	"""
+	parser = argparse.ArgumentParser()
+	parser.add_argument("--config", type=str, default=config_file,
+					   help="Path to config JSON file")
+	parser.add_argument("--bfs_dynamic_folder", type=str, default=None)
+	parser.add_argument("--batch_size", type=int, default=None)
+	parser.add_argument("--device", type=str, default=None)
+	parser.add_argument("--sample_H", type=int, default=None)
+	parser.add_argument("--angle_start", type=int, default=None)
+	parser.add_argument("--angle_end", type=int, default=None)
+	parser.add_argument("--angle_stride", type=int, default=None)
+	parser.add_argument("--detector_count", type=int, default=None)
+	
+	cli_args = parser.parse_args()
+	
+	# Load from JSON
+	with open(cli_args.config, 'r') as f:
+		config = json.load(f)
+	
+	# Override with command-line args if provided
+	for key in config:
+		cli_value = getattr(cli_args, key, None)
+		if cli_value is not None:
+			config[key] = cli_value
+	
+	# Convert to object for easier access
+	class Config:
+		def __init__(self, **kwargs):
+			self.__dict__.update(kwargs)
+	
+	args = Config(**config)
+	
+	# Compute derived paths
+	args.seq_args_txt  = os.path.join(args.bfs_dynamic_folder,
+									 'logging','args.txt')
+	args.diff_args_txt = os.path.join(args.bfs_dynamic_folder,
+									 'diffusion_folder',
+									 'logging','args.txt')
+	
+	# output dataset
+	args.experiment_path = os.path.join(args.bfs_dynamic_folder,
+										'diffusion_folder',
+										'Patient_2')
+	if not os.path.isdir(args.experiment_path):
+		os.makedirs(args.experiment_path)
+	
+	return args
 
 if __name__ == '__main__':
 	"""
-	Fetch args
+	Load configuration from JSON
 	"""
-	args_final = Args_final_eval()
-	args_final = args_final.update_args()	
+	args_final = load_config()
 	# args_seq  = read_args_txt(Args_seq(), 
 	# 						  args_final.seq_args_txt)
 	# args_diff = read_args_txt(Args_diff(), 
@@ -108,22 +87,19 @@ if __name__ == '__main__':
 	Fetch dataset
 	"""
 	# Compute condition indices (must match train_diff.py)
-	sample_H = 720
-	angle_step_deg = 360 / sample_H  # 0.5 degrees per index
-	angle_start = 285
-	angle_end = 330
-	angle_stride = 10
-	start_idx = int(angle_start / angle_step_deg)
-	end_idx = int(angle_end / angle_step_deg)
-	cond_indices = list(range(start_idx, end_idx, angle_stride))
-	data_set = dicom_dataset(data_path="data/extra_data", detector_count=816, angle_step=(360/720),
-								cond_indices=cond_indices)
+	angle_step_deg = 360 / args_final.sample_H  # degrees per index
+	start_idx = int(args_final.angle_start / angle_step_deg)
+	end_idx = int(args_final.angle_end / angle_step_deg)
+	cond_indices = list(range(start_idx, end_idx, args_final.angle_stride))
+	data_set = dicom_dataset(data_path=args_final.data_path, 
+							 detector_count=args_final.detector_count, 
+							 angle_step=(360/args_final.sample_H),
+							 cond_indices=cond_indices)
 	
 	data_loader = DataLoader(dataset=data_set, 
 							 shuffle=False,
-							 batch_size=1)
+							 batch_size=args_final.batch_size)
 
-	
 	
 	"""
 	Fetch models
@@ -138,9 +114,9 @@ if __name__ == '__main__':
 	unet1 = Unet3D(dim=32,
 				   cond_images_channels=3,  # masked sinogram + binary mask + FBP re-projection
 				   memory_efficient=True,
-				   dim_mults=(1, 2,4,8)).to(torch.device("cuda:0"))  #mid: mid channel
-	image_sizes = (720)   # full sinogram height
-	image_width = (816)
+				   dim_mults=(1, 2,4,8)).to(torch.device(args_final.device))
+	image_sizes = (args_final.sample_H)
+	image_width = (args_final.detector_count)
 	imagen = ElucidatedImagen(
             unets = (unet1),
             image_sizes = image_sizes,
@@ -161,8 +137,8 @@ if __name__ == '__main__':
             S_noise = 1.003,
             condition_on_text = False,
             auto_normalize_img = False  # Han Gao make it false
-            ).to(torch.device("cuda:0"))
-	trainer = ImagenTrainer(imagen, device =torch.device("cuda:0"), fp16=True)
+            ).to(torch.device(args_final.device))
+	trainer = ImagenTrainer(imagen, device =torch.device(args_final.device), fp16=True)
 	trainer.load(path=args_final.bfs_dynamic_folder+'/best_model_sofar')
 	test_final_overall(args_final,
 					   None,

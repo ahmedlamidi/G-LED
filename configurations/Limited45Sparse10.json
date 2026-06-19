@@ -1,0 +1,18 @@
+{
+  "bfs_dynamic_folder": "best_model_folder/LimitedView45Sparse10",
+  "Nt_read": 40,
+  "use_best": true,
+  "Nepoch_read": 2,
+  "trajec_max_len": 151,
+  "start_n": 9500,
+  "n_span": 152,
+  "test_Nt": 1,
+  "batch_size": 1,
+  "device": "cuda:0",
+  "sample_H": 720,
+  "angle_start": 285,
+  "angle_end": 330,
+  "angle_stride": 10,
+  "detector_count": 816,
+  "data_path": "Validation_dataset/patient_2"
+}
