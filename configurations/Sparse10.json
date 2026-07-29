@@ -1,5 +1,5 @@
 {
-  "bfs_dynamic_folder": "best_model_folder/LimitedView45Sparse10",
+  "bfs_dynamic_folder": "best_model_folder/Sparse10",
   "Nt_read": 40,
   "use_best": true,
   "Nepoch_read": 2,
@@ -10,9 +10,9 @@
   "batch_size": 1,
   "device": "cuda:0",
   "sample_H": 720,
-  "angle_start": 285,
-  "angle_end": 330,
+  "angle_start": 0,
+  "angle_end": 360,
   "angle_stride": 10,
   "detector_count": 816,
-  "data_path": "AAPM_dataset/patient_1"
+  "data_path": "AAPM_dataset/patient_2"
 }

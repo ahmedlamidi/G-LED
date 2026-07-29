@@ -39,7 +39,7 @@ def fbp_reconstruct_from_sinogram(sinogram, det_count=816, num_angles=720,
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--base_folder",
-                    default='best_model_folder/LimitedView45Sparse10/diffusion_folder/experiment_final_checkpoint_150/contour',
+                    default='best_model_folder/LimitedView45Sparse10/diffusion_folder/patient5/contour',
                     help='Folder containing batch outputs from test_diff')
 args = parser.parse_args()
 

@@ -66,9 +66,10 @@ def load_config(config_file='configurations/Limited45Sparse10.json'):
 									 'logging','args.txt')
 	
 	# output dataset
+	data_folder_name = os.path.basename(os.path.normpath(args.data_path)).replace('_', '').lower()
 	args.experiment_path = os.path.join(args.bfs_dynamic_folder,
 										'diffusion_folder',
-										'Patient_2')
+									data_folder_name)
 	if not os.path.isdir(args.experiment_path):
 		os.makedirs(args.experiment_path)
 	
