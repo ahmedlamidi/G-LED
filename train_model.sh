@@ -29,7 +29,7 @@ nvidia-smi
 
 # srun python main_diff_bfs.py --resume
 # srun python data/dicom_preprocess.py
-# srun python main_diff_eval_bfs.py
+srun python main_diff_eval_bfs.py
 # srun python validation/compare_sparse_methods_with_1062.py
 # srun python validation/match_and_compare_with_1062.py \
 # 	--model_sinogram output/LimitedView45Sparse10/diffusion_folder/experiment_final_checkpoint_150/contour/batch0/recon_micro_0.npy \
@@ -37,7 +37,7 @@ nvidia-smi
 # 	--window_width 1500 \
 # 	--window_level -600
 # srun python saved_ground_truth.py
-srun python validation/compare_ssim.py
+# srun python validation/compare_ssim.py
 # srun python validation/convert_to_dicom.py
 
 # python dicom_fbp_degraded.py \
