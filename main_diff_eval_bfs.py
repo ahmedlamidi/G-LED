@@ -3,6 +3,7 @@ import pdb
 import os
 import sys
 import json
+import time
 from torch.utils.data import DataLoader
 import torch
 
@@ -139,7 +140,12 @@ if __name__ == '__main__':
             auto_normalize_img = False  # Han Gao make it false
             ).to(torch.device(args_final.device))
 	trainer = ImagenTrainer(imagen, device =torch.device(args_final.device), fp16=True)
+
+	t_load_start = time.perf_counter()
 	trainer.load(path=args_final.bfs_dynamic_folder+'/best_model_sofar')
+	t_load = time.perf_counter() - t_load_start
+
+	t_eval_start = time.perf_counter()
 	test_final_overall(args_final,
 					   None,
 					   None,
@@ -147,6 +153,13 @@ if __name__ == '__main__':
 					   None,
 					   data_loader,
 					   cond_indices=cond_indices)
+	t_total = time.perf_counter() - t_eval_start
+
+	# Timing is logged to file (see inference_timing.txt), not stdout
+	timing_log = os.path.join(args_final.experiment_path, 'inference_timing.txt')
+	with open(timing_log, 'a') as f:
+		f.write(f'Model load time         : {t_load:.2f} s\n')
+		f.write(f'Total evaluation time   : {t_total:.2f} s ({t_total/60:.2f} min)\n')
 
 
 

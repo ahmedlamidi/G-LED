@@ -2,6 +2,7 @@ from tqdm import tqdm
 import torch
 import sys
 import os
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
@@ -9,6 +10,12 @@ import torch.nn.functional as F
 
 sys.path.insert(0, './util')
 from utils import save_loss
+
+
+def _sync(device):
+    """Make sure queued GPU work is finished before reading the clock."""
+    if torch.device(device).type == 'cuda':
+        torch.cuda.synchronize()
 
 
 def test_final_overall(args_final,
@@ -47,6 +54,15 @@ def test_final(args_final,
 
     vf = 1  # video frames per chunk
     Nvf = args_final.test_Nt // vf
+
+    sample_times = []   # seconds per trainer.sample() call
+    batch_times = []    # seconds of sampling per batch
+    timing_log = os.path.join(args_final.experiment_path, 'inference_timing.txt')
+    with open(timing_log, 'w') as f:
+        f.write('Inference timing log\n')
+        f.write(f'device: {args_final.device}, batches: {len(data_loader)}, '
+                f'chunks per batch: {Nvf}, frames per chunk: {vf}\n\n')
+    eval_start = time.perf_counter()
 
     with torch.no_grad():
         print('total iterations:', len(data_loader))
@@ -87,13 +103,24 @@ def test_final(args_final,
 
             # Sample in chunks of vf frames
             recon_micro = []
+            batch_sample_time = 0.0
             for j in range(Nvf):
                 cond_chunk = batch_cond_perm[:, :, vf*j:vf*(j+1), :, :]
                 print(f"cond_chunk shape: {cond_chunk.shape}, video_frames: {vf}")
-                save_arr = trainer.sample(
+
+                _sync(args_final.device)
+                t_start = time.perf_counter()
+                sampled = trainer.sample(
                     video_frames=vf,
                     cond_images=cond_chunk
-                ).detach().cpu().numpy()
+                )
+                _sync(args_final.device)
+                t_sample = time.perf_counter() - t_start
+
+                sample_times.append(t_sample)
+                batch_sample_time += t_sample
+
+                save_arr = sampled.detach().cpu().numpy()
 
                 np.save(os.path.join(batch_dir, f"recon_micro_{j}.npy"), save_arr)
                 np.save(os.path.join(batch_dir, f"recon_micro_{j}gt.npy"),
@@ -124,7 +151,13 @@ def test_final(args_final,
             mse_unknown = np.mean((recon_2d[unknown_rows, :] - full_sino_np[unknown_rows, :]) ** 2)
             mse_known = np.mean((recon_2d[cond_indices, :] - full_sino_np[cond_indices, :]) ** 2)
 
+            batch_times.append(batch_sample_time)
             print(f"  {seq_name}: MSE_full={mse:.6f}, MSE_unknown={mse_unknown:.6f}, MSE_known={mse_known:.6f}")
+
+            # Append this batch's inference time to the timing log
+            with open(timing_log, 'a') as f:
+                f.write(f'{seq_name}: inference {batch_sample_time:.3f} s '
+                        f'({batch_sample_time/max(Nvf,1):.3f} s per chunk)\n')
 
             # Visualization
             if save_flag:
@@ -151,4 +184,22 @@ def test_final(args_final,
                             bbox_inches='tight', dpi=150)
                 plt.close(fig)
 
+    total_wall = time.perf_counter() - eval_start
+    total_sample = sum(sample_times)
+    frac = 100 * total_sample / total_wall if total_wall > 0 else 0.0
+
+    with open(timing_log, 'a') as f:
+        f.write('\n===== Timing summary =====\n')
+        f.write(f'Batches evaluated       : {len(batch_times)}\n')
+        f.write(f'Total wall-clock        : {total_wall:.2f} s ({total_wall/60:.2f} min)\n')
+        f.write(f'Total inference (sample): {total_sample:.2f} s ({frac:.1f}% of wall-clock)\n')
+        if batch_times:
+            f.write(f'Inference per batch     : mean {np.mean(batch_times):.3f} s, '
+                    f'min {np.min(batch_times):.3f} s, max {np.max(batch_times):.3f} s\n')
+        if sample_times:
+            f.write(f'Inference per sample()  : mean {np.mean(sample_times):.3f} s, '
+                    f'min {np.min(sample_times):.3f} s, max {np.max(sample_times):.3f} s '
+                    f'over {len(sample_times)} calls\n')
+
     print(f"\nDone! Results saved to {contour_dir}")
+    print(f"Timing written to {timing_log}")
