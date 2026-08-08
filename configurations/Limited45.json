@@ -8,6 +8,8 @@
   "n_span": 152,
   "test_Nt": 1,
   "batch_size": 1,
+  "num_sample_steps": 20,
+  "timing_only": false,
   "device": "cuda:0",
   "sample_H": 720,
   "angle_start": 285,

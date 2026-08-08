@@ -38,19 +38,28 @@ def load_config(config_file='configurations/Limited45Sparse10.json'):
 	parser.add_argument("--angle_end", type=int, default=None)
 	parser.add_argument("--angle_stride", type=int, default=None)
 	parser.add_argument("--detector_count", type=int, default=None)
-	
+	# Sweep knobs — override the JSON without editing it
+	parser.add_argument("--num_sample_steps", type=int, default=None,
+					   help="diffusion sampling steps; cost is ~linear in this")
+	parser.add_argument("--timing_only", action="store_true", default=None,
+					   help="measure inference time + SSIM only, write no .npy/.png")
+
 	cli_args = parser.parse_args()
 	
 	# Load from JSON
 	with open(cli_args.config, 'r') as f:
 		config = json.load(f)
 	
-	# Override with command-line args if provided
-	for key in config:
-		cli_value = getattr(cli_args, key, None)
-		if cli_value is not None:
-			config[key] = cli_value
-	
+	# Override with command-line args if provided (also adds keys the JSON omits)
+	for key, cli_value in vars(cli_args).items():
+		if key == 'config' or cli_value is None:
+			continue
+		config[key] = cli_value
+
+	# Defaults for configs written before these knobs existed
+	config.setdefault('num_sample_steps', 20)
+	config.setdefault('timing_only', False)
+
 	# Convert to object for easier access
 	class Config:
 		def __init__(self, **kwargs):
@@ -125,7 +134,7 @@ if __name__ == '__main__':
             image_width = image_width,   
             channels = 1,   # Han Gao add the input to this args explicity     
             random_crop_sizes = None,
-            num_sample_steps = 20, # original is 10
+            num_sample_steps = args_final.num_sample_steps, # config knob; original is 10
             cond_drop_prob = 0.1,
             sigma_min = 0.002,
             sigma_max = (80),      # max noise level, double the max noise level for upsampler  （80，160）
@@ -147,7 +156,7 @@ if __name__ == '__main__':
 	t_load = time.perf_counter() - t_load_start
 
 	t_eval_start = time.perf_counter()
-	test_final_overall(args_final,
+	report_path = test_final_overall(args_final,
 					   None,
 					   None,
 					   trainer,
@@ -156,9 +165,8 @@ if __name__ == '__main__':
 					   cond_indices=cond_indices)
 	t_total = time.perf_counter() - t_eval_start
 
-	# Timing is logged to file (see inference_timing.txt), not stdout
-	timing_log = os.path.join(args_final.experiment_path, 'inference_timing.txt')
-	with open(timing_log, 'a') as f:
+	# Timing goes to the report file, not stdout
+	with open(report_path, 'a') as f:
 		f.write(f'Model load time         : {t_load:.2f} s\n')
 		f.write(f'Total evaluation time   : {t_total:.2f} s ({t_total/60:.2f} min)\n')
 
