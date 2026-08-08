@@ -43,6 +43,10 @@ nvidia-smi
 # srun python compare_ssim.py
 #to start from saved model
 
+# srun python main_diff_bfs.py --resume
+# srun python data/dicom_preprocess.py
+srun python main_diff_eval_bfs.py
+# srun python validation/compare_sparse_methods_with_1062.py
 # srun --export=ALL "$PY" main_diff_bfs.py --resume
 # srun --export=ALL "$PY" data/dicom_preprocess.py
 srun --export=ALL "$PY" main_diff_eval_bfs.py
@@ -52,6 +56,9 @@ srun --export=ALL "$PY" main_diff_eval_bfs.py
 # 	--dicom_path data/extra_data/1-001.dcm \
 # 	--window_width 1500 \
 # 	--window_level -600
+# srun python saved_ground_truth.py
+# srun python validation/compare_ssim.py
+# srun python validation/convert_to_dicom.py
 # srun --export=ALL "$PY" saved_ground_truth.py
 # srun --export=ALL "$PY" validation/compare_ssim.py
 # srun --export=ALL "$PY" validation/convert_to_dicom.py
