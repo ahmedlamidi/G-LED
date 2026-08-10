@@ -25,31 +25,68 @@ export TMP=/home/a/ahmedlamidi/tmp
 # system python if the job step does not inherit the activated environment.
 PY="$CONDA_PREFIX/bin/python"
 
-# Dependency installs re-solve the env and can bump its python version, which
-# orphans pip-installed torch. Run them deliberately, not on every job:
-#   INSTALL_DEPS=1 sbatch train_model.sh
+# This GPU (RTX PRO 6000 Blackwell) is sm_120, which only exists in torch's
+# CUDA 12.8 builds -> torch >= 2.7. A cu121 wheel imports and reports
+# cuda.is_available() == True, then fails every kernel launch with
+# "no kernel image is available for execution on the device". So the check
+# below is not "is torch installed" but "does this torch have kernels for
+# this GPU". torchvision must move in lockstep or imagen_pytorch's import breaks.
+TORCH_VERSION=2.8.0
+TORCHVISION_VERSION=0.23.0
+
+torch_matches_gpu() {
+	"$PY" - <<-'EOF' 2>/dev/null
+	import sys
+	try:
+	    import torch
+	except ImportError:
+	    sys.exit(1)
+	if not torch.cuda.is_available():
+	    sys.exit(1)
+	arch = 'sm_%d%d' % torch.cuda.get_device_capability()
+	sys.exit(0 if arch in torch.cuda.get_arch_list() else 1)
+	EOF
+}
+
+install_deps() {
+	# astra-toolbox comes from requirements.txt via pip; the old
+	# `conda install astra-toolbox::astra-toolbox` named a channel that 404s.
+	"$PY" -m pip install --no-cache-dir -r requirements.txt
+	"$PY" -m pip install --no-cache-dir --upgrade \
+		"torch==${TORCH_VERSION}" "torchvision==${TORCHVISION_VERSION}"
+}
+
+# Installs run when forced (INSTALL_DEPS=1 sbatch train_model.sh) or when the
+# env's torch cannot actually run on the allocated GPU.
 if [ "${INSTALL_DEPS:-0}" = "1" ]; then
-	conda install -y pip
-	conda install -y astra-toolbox::astra-toolbox
-	"$PY" -m pip install -r requirements.txt
+	install_deps
+elif ! torch_matches_gpu; then
+	echo "torch missing or built without kernels for this GPU - installing"
+	install_deps
 fi
 
 nvcc --version
 nvidia-smi
 
-# Fail here with a clear message rather than deep inside the training script.
-"$PY" -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
+# Fail here with a clear message rather than deep inside the eval script.
+"$PY" -c "import torch, torchvision; print('torch', torch.__version__, 'torchvision', torchvision.__version__); print('arch list', torch.cuda.get_arch_list())"
+if ! torch_matches_gpu; then
+	echo "ERROR: torch has no kernels for this GPU's compute capability."
+	echo "       Every CUDA op would fail with 'no kernel image is available'."
+	echo "       If pip reported a corrupt dist-info, clear the leftovers first:"
+	echo "         ls -d \$CONDA_PREFIX/lib/python3.9/site-packages/~*"
+	exit 1
+fi
 #srun --ntasks=1 --cpus-per-task=1 --exact visdom -port 8097 &
 # srun python compare_ssim.py
 #to start from saved model
 
 # srun python main_diff_bfs.py --resume
 # srun python data/dicom_preprocess.py
-srun python main_diff_eval_bfs.py
+srun --export=ALL "$PY" main_diff_eval_bfs.py
 # srun python validation/compare_sparse_methods_with_1062.py
 # srun --export=ALL "$PY" main_diff_bfs.py --resume
 # srun --export=ALL "$PY" data/dicom_preprocess.py
-srun --export=ALL "$PY" main_diff_eval_bfs.py
 # srun --export=ALL "$PY" validation/compare_sparse_methods_with_1062.py
 # srun python validation/match_and_compare_with_1062.py \
 # 	--model_sinogram output/LimitedView45Sparse10/diffusion_folder/experiment_final_checkpoint_150/contour/batch0/recon_micro_0.npy \
