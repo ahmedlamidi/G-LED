@@ -12,8 +12,12 @@ ema_pytorch
 accelerate
 pydantic
 imagen_pytorch
-torch
+# CUDA 12.8 build: needed for sm_120 (RTX PRO 6000 Blackwell).
+# torch and torchvision must be upgraded together or torchvision's ABI breaks.
+torch==2.8.0
+torchvision==0.23.0
 astra-toolbox
 wandb
 dotenv
 imageio
+scikit-image
