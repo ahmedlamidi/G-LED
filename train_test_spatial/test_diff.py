@@ -245,26 +245,29 @@ def test_final(args_final,
                 sample_idx = iteration * batch_size + i
                 seq_name = 'batch' + str(sample_idx)
 
+                # Single preview of the first slice, written in both modes and
+                # named for the sweep point, so runs can be compared side by side
+                if sample_idx == 0:
+                    mse_0 = np.mean((recon_2d - full_sino_np) ** 2)
+                    mse_unknown_0 = np.mean(
+                        (recon_2d[unknown_rows, :] - full_sino_np[unknown_rows, :]) ** 2)
+                    _save_overview(preview_path,
+                                   full_sino_np,
+                                   masked_sino_batch[i],
+                                   recon_2d,
+                                   cond_indices,
+                                   mse_0,
+                                   mse_unknown_0,
+                                   ssim_full=ssim_full,
+                                   ssim_unknown=ssim_unknown,
+                                   suptitle=f'{model_name} | slice 0 | '
+                                            f'steps={num_sample_steps} | bs={batch_size}')
+                    print(f"  preview written to {preview_path}")
+
                 if timing_only:
-                    # One preview of the first slice only, so the sweep stays
-                    # cheap but the reconstruction is still inspectable
-                    if sample_idx == 0:
-                        mse = np.mean((recon_2d - full_sino_np) ** 2)
-                        mse_unknown = np.mean(
-                            (recon_2d[unknown_rows, :] - full_sino_np[unknown_rows, :]) ** 2)
-                        _save_overview(preview_path,
-                                       full_sino_np,
-                                       masked_sino_batch[i],
-                                       recon_2d,
-                                       cond_indices,
-                                       mse,
-                                       mse_unknown,
-                                       ssim_full=ssim_full,
-                                       ssim_unknown=ssim_unknown,
-                                       suptitle=f'{model_name} | slice 0 | '
-                                                f'steps={num_sample_steps} | bs={batch_size}')
-                        print(f"  preview written to {preview_path}")
                     continue
+                else:
+                    pass
 
                 batch_dir = os.path.join(contour_dir, seq_name)
                 os.makedirs(batch_dir, exist_ok=True)
@@ -337,8 +340,7 @@ def test_final(args_final,
 
     if not timing_only:
         print(f"\nDone! Results saved to {contour_dir}")
-    else:
-        print(f"Preview written to {preview_path}")
+    print(f"Preview written to {preview_path}")
     print(f"Report written to {report_path}")
 
     return report_path
