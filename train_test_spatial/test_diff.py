@@ -54,6 +54,110 @@ def _ssim_metrics(recon_2d, gt_2d, cond_indices):
     return ssim_full, ssim_unknown
 
 
+def _fbp_reconstruct(sinogram, DSO=1000, ODD=600, N_pix=512):
+    """
+    FBP reconstruction of a sinogram into a CT image [N_pix, N_pix].
+    Same fan-beam geometry as data/dicom_preprocess.py and
+    validation/compare_ssim.py, so the images are comparable with those.
+    """
+    import astra
+
+    sinogram = np.ascontiguousarray(sinogram, dtype=np.float32)
+    num_angles, det_count = sinogram.shape
+    angles = np.linspace(0, 2 * np.pi, num_angles, endpoint=False).astype(np.float32)
+
+    vol_geom = astra.create_vol_geom(N_pix, N_pix)
+    proj_geom = astra.create_proj_geom('fanflat', 1.0, det_count, angles, DSO, ODD)
+
+    sino_id = astra.data2d.create('-sino', proj_geom, sinogram)
+    rec_id = astra.data2d.create('-vol', vol_geom)
+
+    cfg = astra.astra_dict('FBP_CUDA')
+    cfg['ProjectionDataId'] = sino_id
+    cfg['ReconstructionDataId'] = rec_id
+    alg_id = astra.algorithm.create(cfg)
+    try:
+        astra.algorithm.run(alg_id)
+        recon = astra.data2d.get(rec_id)
+    finally:
+        astra.algorithm.delete(alg_id)
+        astra.data2d.delete(sino_id)
+        astra.data2d.delete(rec_id)
+    return recon
+
+
+def _save_preview(out_path, full_sino_np, masked_sino_np, recon_2d,
+                  cond_indices, mse, mse_unknown,
+                  ssim_full=None, ssim_unknown=None, suptitle=None):
+    """
+    Preview figure: sinogram domain on the top row, the FBP-reconstructed CT
+    images on the bottom row. Returns the image-domain SSIM, or None if the
+    FBP could not be run.
+    """
+    try:
+        fbp_gt = _fbp_reconstruct(full_sino_np)
+        fbp_pred = _fbp_reconstruct(recon_2d)
+    except Exception as exc:  # astra missing, no CUDA, bad geometry
+        print(f"  FBP failed ({exc}); falling back to sinogram-only preview")
+        _save_overview(out_path, full_sino_np, masked_sino_np, recon_2d,
+                       cond_indices, mse, mse_unknown,
+                       ssim_full=ssim_full, ssim_unknown=ssim_unknown,
+                       suptitle=suptitle)
+        return None
+
+    # Normalize both CT images by the GT range, as validation/compare_ssim.py does
+    fmin, fmax = float(fbp_gt.min()), float(fbp_gt.max())
+    if fmax > fmin:
+        fbp_gt_n = (fbp_gt - fmin) / (fmax - fmin)
+        fbp_pred_n = (fbp_pred - fmin) / (fmax - fmin)
+    else:
+        fbp_gt_n, fbp_pred_n = fbp_gt, fbp_pred
+
+    ssim_ct = None
+    if structural_similarity is not None:
+        ssim_ct = structural_similarity(fbp_gt_n, fbp_pred_n, data_range=1.0)
+
+    fig, axes = plt.subplots(2, 3, figsize=(16, 11))
+
+    # Top row: sinogram domain
+    axes[0, 0].imshow(full_sino_np, cmap='gray', aspect='auto')
+    axes[0, 0].set_title('Sinogram: Ground Truth')
+
+    axes[0, 1].imshow(masked_sino_np, cmap='gray', aspect='auto')
+    axes[0, 1].set_title(f'Sinogram: Condition ({len(cond_indices)} known rows)')
+
+    sino_title = f'Sinogram: Reconstruction (MSE={mse:.4f}'
+    if ssim_full is not None:
+        sino_title += f', SSIM={ssim_full:.4f}'
+    axes[0, 2].imshow(recon_2d, cmap='gray', aspect='auto')
+    axes[0, 2].set_title(sino_title + ')')
+
+    # Bottom row: image domain, after FBP
+    axes[1, 0].imshow(fbp_gt_n, cmap='gray', vmin=0, vmax=1)
+    axes[1, 0].set_title('CT: FBP of Ground Truth')
+
+    ct_title = 'CT: FBP of Reconstruction'
+    if ssim_ct is not None:
+        ct_title += f' (SSIM={ssim_ct:.4f})'
+    axes[1, 1].imshow(fbp_pred_n, cmap='gray', vmin=0, vmax=1)
+    axes[1, 1].set_title(ct_title)
+
+    axes[1, 2].imshow(np.abs(fbp_gt_n - fbp_pred_n), cmap='hot')
+    axes[1, 2].set_title('CT: Absolute Difference')
+
+    for ax in axes.ravel():
+        ax.axis('off')
+
+    if suptitle:
+        fig.suptitle(suptitle, fontsize=13)
+
+    plt.tight_layout()
+    fig.savefig(out_path, bbox_inches='tight', dpi=150)
+    plt.close(fig)
+
+    return ssim_ct
+
+
 def _save_overview(out_path, full_sino_np, masked_sino_np, recon_2d,
                    cond_indices, mse, mse_unknown,
                    ssim_full=None, ssim_unknown=None, suptitle=None):
@@ -246,23 +350,28 @@ def test_final(args_final,
                 seq_name = 'batch' + str(sample_idx)
 
                 # Single preview of the first slice, written in both modes and
-                # named for the sweep point, so runs can be compared side by side
+                # named for the sweep point, so runs can be compared side by side.
+                # This one runs FBP so the CT image itself is visible, not just
+                # the sinogram — hence first slice only.
                 if sample_idx == 0:
                     mse_0 = np.mean((recon_2d - full_sino_np) ** 2)
                     mse_unknown_0 = np.mean(
                         (recon_2d[unknown_rows, :] - full_sino_np[unknown_rows, :]) ** 2)
-                    _save_overview(preview_path,
-                                   full_sino_np,
-                                   masked_sino_batch[i],
-                                   recon_2d,
-                                   cond_indices,
-                                   mse_0,
-                                   mse_unknown_0,
-                                   ssim_full=ssim_full,
-                                   ssim_unknown=ssim_unknown,
-                                   suptitle=f'{model_name} | slice 0 | '
-                                            f'steps={num_sample_steps} | bs={batch_size}')
+                    ssim_ct_0 = _save_preview(preview_path,
+                                              full_sino_np,
+                                              masked_sino_batch[i],
+                                              recon_2d,
+                                              cond_indices,
+                                              mse_0,
+                                              mse_unknown_0,
+                                              ssim_full=ssim_full,
+                                              ssim_unknown=ssim_unknown,
+                                              suptitle=f'{model_name} | slice 0 | '
+                                                       f'steps={num_sample_steps} | bs={batch_size}')
                     print(f"  preview written to {preview_path}")
+                    with open(report_path, 'a') as f:
+                        f.write(f'preview slice 0: SSIM_sino={ssim_full:.4f}, '
+                                f'SSIM_ct={"n/a" if ssim_ct_0 is None else f"{ssim_ct_0:.4f}"}\n')
 
                 if timing_only:
                     continue
