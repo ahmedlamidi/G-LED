@@ -54,6 +54,42 @@ def _ssim_metrics(recon_2d, gt_2d, cond_indices):
     return ssim_full, ssim_unknown
 
 
+def _save_overview(out_path, full_sino_np, masked_sino_np, recon_2d,
+                   cond_indices, mse, mse_unknown,
+                   ssim_full=None, ssim_unknown=None, suptitle=None):
+    """Four-panel comparison: ground truth, masked condition, reconstruction, error."""
+    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+
+    axes[0].imshow(full_sino_np, cmap='gray', aspect='auto')
+    axes[0].set_title('Ground Truth (Full)')
+    axes[0].axis('off')
+
+    axes[1].imshow(masked_sino_np, cmap='gray', aspect='auto')
+    axes[1].set_title(f'Masked Condition ({len(cond_indices)} known rows)')
+    axes[1].axis('off')
+
+    recon_title = f'Reconstruction (MSE={mse:.4f}'
+    if ssim_full is not None:
+        recon_title += f', SSIM={ssim_full:.4f}'
+    axes[2].imshow(recon_2d, cmap='gray', aspect='auto')
+    axes[2].set_title(recon_title + ')')
+    axes[2].axis('off')
+
+    err_title = f'Error (unknown MSE={mse_unknown:.4f}'
+    if ssim_unknown is not None:
+        err_title += f', SSIM={ssim_unknown:.4f}'
+    axes[3].imshow(np.abs(recon_2d - full_sino_np), cmap='hot', aspect='auto')
+    axes[3].set_title(err_title + ')')
+    axes[3].axis('off')
+
+    if suptitle:
+        fig.suptitle(suptitle, fontsize=13)
+
+    plt.tight_layout()
+    fig.savefig(out_path, bbox_inches='tight', dpi=150)
+    plt.close(fig)
+
+
 def test_final_overall(args_final,
                        args_seq,
                        args_diff,
@@ -85,18 +121,20 @@ def test_final(args_final,
     if cond_indices is None:
         raise ValueError("cond_indices must be provided — define it in main_diff_eval_bfs.py and pass it through")
 
-    # Timing-only mode records inference time and SSIM and writes nothing else:
-    # no .npy dumps, no contour figures. Use it to sweep batch_size /
-    # num_sample_steps without the disk traffic skewing the measurement.
+    # Timing-only mode records inference time and SSIM, plus a single preview
+    # PNG of the first slice — no per-slice .npy dumps or figures. Use it to
+    # sweep batch_size / num_sample_steps without disk traffic skewing the
+    # measurement, while still being able to eyeball what the run produced.
     timing_only = bool(getattr(args_final, 'timing_only', False))
     num_sample_steps = getattr(args_final, 'num_sample_steps', 'NA')
     batch_size = getattr(args_final, 'batch_size', 1)
     model_name = os.path.basename(os.path.normpath(args_final.bfs_dynamic_folder))
 
-    # The report name is the sweep point, so runs don't overwrite each other
-    report_path = os.path.join(
-        args_final.experiment_path,
-        f'timing_bs{batch_size}_steps{num_sample_steps}_{model_name}.txt')
+    # The report name is the sweep point, so runs don't overwrite each other.
+    # The preview PNG shares the stem, so the images line up alongside it.
+    run_stem = f'timing_bs{batch_size}_steps{num_sample_steps}_{model_name}'
+    report_path = os.path.join(args_final.experiment_path, run_stem + '.txt')
+    preview_path = os.path.join(args_final.experiment_path, run_stem + '.png')
 
     contour_dir = os.path.join(args_final.experiment_path, 'contour')
     if not timing_only:
@@ -203,11 +241,31 @@ def test_final(args_final,
                 ssim_full_all.append(ssim_full)
                 ssim_unknown_all.append(ssim_unknown)
 
+                # Global sample index so batched runs don't collide
+                sample_idx = iteration * batch_size + i
+                seq_name = 'batch' + str(sample_idx)
+
                 if timing_only:
+                    # One preview of the first slice only, so the sweep stays
+                    # cheap but the reconstruction is still inspectable
+                    if sample_idx == 0:
+                        mse = np.mean((recon_2d - full_sino_np) ** 2)
+                        mse_unknown = np.mean(
+                            (recon_2d[unknown_rows, :] - full_sino_np[unknown_rows, :]) ** 2)
+                        _save_overview(preview_path,
+                                       full_sino_np,
+                                       masked_sino_batch[i],
+                                       recon_2d,
+                                       cond_indices,
+                                       mse,
+                                       mse_unknown,
+                                       ssim_full=ssim_full,
+                                       ssim_unknown=ssim_unknown,
+                                       suptitle=f'{model_name} | slice 0 | '
+                                                f'steps={num_sample_steps} | bs={batch_size}')
+                        print(f"  preview written to {preview_path}")
                     continue
 
-                # Global sample index so batched runs don't collide
-                seq_name = 'batch' + str(iteration * batch_size + i)
                 batch_dir = os.path.join(contour_dir, seq_name)
                 os.makedirs(batch_dir, exist_ok=True)
 
@@ -231,28 +289,15 @@ def test_final(args_final,
 
                 # Visualization
                 if save_flag:
-                    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
-
-                    axes[0].imshow(full_sino_np, cmap='gray', aspect='auto')
-                    axes[0].set_title('Ground Truth (Full)')
-                    axes[0].axis('off')
-
-                    axes[1].imshow(masked_sino_batch[i], cmap='gray', aspect='auto')
-                    axes[1].set_title(f'Masked Condition ({len(cond_indices)} known rows)')
-                    axes[1].axis('off')
-
-                    axes[2].imshow(recon_2d, cmap='gray', aspect='auto')
-                    axes[2].set_title(f'Reconstruction (MSE={mse:.4f})')
-                    axes[2].axis('off')
-
-                    axes[3].imshow(np.abs(recon_2d - full_sino_np), cmap='hot', aspect='auto')
-                    axes[3].set_title(f'Error (unknown MSE={mse_unknown:.4f})')
-                    axes[3].axis('off')
-
-                    plt.tight_layout()
-                    fig.savefig(os.path.join(batch_dir, 'overview.png'),
-                                bbox_inches='tight', dpi=150)
-                    plt.close(fig)
+                    _save_overview(os.path.join(batch_dir, 'overview.png'),
+                                   full_sino_np,
+                                   masked_sino_batch[i],
+                                   recon_2d,
+                                   cond_indices,
+                                   mse,
+                                   mse_unknown,
+                                   ssim_full=ssim_full,
+                                   ssim_unknown=ssim_unknown)
 
             with open(report_path, 'a') as f:
                 f.write(f'{"batch" + str(iteration):<16}{b_size:>4}'
@@ -292,6 +337,8 @@ def test_final(args_final,
 
     if not timing_only:
         print(f"\nDone! Results saved to {contour_dir}")
+    else:
+        print(f"Preview written to {preview_path}")
     print(f"Report written to {report_path}")
 
     return report_path
