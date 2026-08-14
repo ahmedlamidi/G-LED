@@ -9,8 +9,6 @@
 #SBATCH --mem=64G
 # 激活 conda（按 GAIVI 手册风格)
 
-set -eo pipefail
-
 cd "$SLURM_SUBMIT_DIR"
 mkdir -p logs
 source /apps/anaconda3/etc/profile.d/conda.sh
