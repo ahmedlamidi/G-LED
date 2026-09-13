@@ -50,14 +50,35 @@ class Args:
 		"""
 		for training 
 		"""
-		self.parser.add_argument("--batch_size", default = 8)
-		self.parser.add_argument("--epoch_num", default = 500)
+		self.parser.add_argument("--batch_size", type=int, default = 8)
+		self.parser.add_argument("--epoch_num", type=int, default = 500)
 		self.parser.add_argument("--device", type=str, default = "cuda:0")
 		self.parser.add_argument("--shuffle",default=True)
 		self.parser.add_argument("--resume", action='store_true', 
 								 help='Resume training from checkpoint')
 		self.parser.add_argument("--checkpoint_path", type=str, default=None,
 								 help='Path to checkpoint file to resume from (default: best_model_sofar)')
+		"""
+		for the angular sampling pattern (cond_indices)
+		"""
+		self.parser.add_argument("--sample_H", type=int, default=720,
+								 help='full sinogram height, i.e. number of angles over 360 deg')
+		self.parser.add_argument("--angle_start", type=float, default=240,
+								 help='first covered angle, in degrees')
+		self.parser.add_argument("--angle_end", type=float, default=330,
+								 help='end of the covered arc, in degrees (exclusive)')
+		self.parser.add_argument("--angle_stride", type=int, default=1,
+								 help='keep every Nth index (1 = all, 10 = every 5 degrees)')
+		"""
+		for the physics-informed loss
+		"""
+		self.parser.add_argument("--physics_loss_weight", type=float, default=0.1,
+								 help='weight of the conjugate-ray symmetry loss; 0 turns it off')
+		"""
+		for run bookkeeping
+		"""
+		self.parser.add_argument("--wandb_project", type=str, default='limited 90')
+		self.parser.add_argument("--wandb_run_name", type=str, default=None)
 		
 
 
@@ -94,17 +115,18 @@ if __name__ == '__main__':
 	"""
 	Fetch dataset
 	"""
-	# Compute condition indices (must match train_diff.py)
-	sample_H = 720
-	angle_step_deg = 360 / sample_H  # 0.5 degrees per index
-	angle_start = 240
-	angle_end = 330
-	angle_stride = 1  # take every Nth index (1 = all, 10 = every 5 degrees)
-	start_idx = int(angle_start / angle_step_deg)  # 480
-	end_idx = int(angle_end / angle_step_deg)      # 660
-	cond_indices = list(range(start_idx, end_idx, angle_stride))
+	# Compute condition indices (must match main_diff_eval_bfs.py)
+	sample_H = diff_args.sample_H
+	angle_step_deg = 360 / sample_H  # 0.5 degrees per index at sample_H = 720
+	start_idx = int(diff_args.angle_start / angle_step_deg)
+	end_idx = int(diff_args.angle_end / angle_step_deg)
+	cond_indices = list(range(start_idx, end_idx, diff_args.angle_stride))
+	print(f'Coverage {diff_args.angle_start:g}-{diff_args.angle_end:g} deg, '
+		  f'stride {diff_args.angle_stride} -> {len(cond_indices)} of {sample_H} views')
+	print(f'Physics loss weight: {diff_args.physics_loss_weight}'
+		  f'{"  (physics loss OFF)" if diff_args.physics_loss_weight == 0 else ""}')
 
-	data_set = dicom_dataset(detector_count=816, angle_step=(360/720),
+	data_set = dicom_dataset(detector_count=816, angle_step=angle_step_deg,
 	                         cond_indices=cond_indices)
  
 	data_loader = DataLoader(dataset=data_set,
@@ -141,7 +163,8 @@ if __name__ == '__main__':
 		S_tmax = 50,
 		S_noise = 1.003,
 		condition_on_text = False,
-		auto_normalize_img = False  # Han Gao make it false
+		auto_normalize_img = False,  # Han Gao make it false
+		physics_loss_weight = diff_args.physics_loss_weight
 		).to(torch.device(diff_args.device))
 	trainer = ImagenTrainer(imagen, device=torch.device(diff_args.device), fp16=True)
 	
@@ -159,7 +182,8 @@ if __name__ == '__main__':
 	
 	# Initialize wandb
 	wandb.init(
-		project="limited 90",
+		project=diff_args.wandb_project,
+		name=diff_args.wandb_run_name,
 		config={
 			"batch_size": diff_args.batch_size,
 			"epoch_num": diff_args.epoch_num,
@@ -168,6 +192,11 @@ if __name__ == '__main__':
 			"Nt": diff_args.Nt,
 			"device": diff_args.device,
 			"fp16": True,
+			"angle_start": diff_args.angle_start,
+			"angle_end": diff_args.angle_end,
+			"angle_stride": diff_args.angle_stride,
+			"n_cond_views": len(cond_indices),
+			"physics_loss_weight": diff_args.physics_loss_weight,
 		}
 	)
 
