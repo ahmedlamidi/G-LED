@@ -15,6 +15,7 @@ __pycache__/
 wandb/
 /data/fbp_reproj_cache
 /data/fbp_*
+/data/baselines_cache
 /output_old
 /Comparsion
 /best_model_folder
