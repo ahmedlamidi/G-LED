@@ -1,6 +1,6 @@
 #!/bin/bash -l
 #SBATCH --job-name=bl-fbp
-#SBATCH -p general
+#SBATCH -p YES
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
 #SBATCH --mem=64G
