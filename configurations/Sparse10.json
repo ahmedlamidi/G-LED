@@ -7,7 +7,7 @@
   "start_n": 9500,
   "n_span": 152,
   "test_Nt": 1,
-  "batch_size": 1,
+  "batch_size": 16,
   "num_sample_steps": 20,
   "timing_only": false,
   "device": "cuda:0",

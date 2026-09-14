@@ -23,7 +23,7 @@ from dicom_preprocess import dicom_dataset
 
 
 
-def load_config(config_file='configurations/Limited45.json'):
+def load_config(config_file='configurations/Sparse10.json'):
 	"""
 	Load configuration from JSON file with optional command-line overrides
 	"""

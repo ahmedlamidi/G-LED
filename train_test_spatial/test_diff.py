@@ -194,6 +194,35 @@ def _save_overview(out_path, full_sino_np, masked_sino_np, recon_2d,
     plt.close(fig)
 
 
+def _save_eval_images(batch_dir, sinogram_input, sinogram_output):
+    """
+    Save four PNGs for quick qualitative inspection:
+    1) sinogram input (masked condition)
+    2) sinogram output (model reconstruction)
+    3) reconstruction of input sinogram (FBP)
+    4) reconstruction of output sinogram (FBP)
+    """
+    in_path = os.path.join(batch_dir, 'sinogram_input.png')
+    out_path = os.path.join(batch_dir, 'sinogram_output.png')
+    plt.imsave(in_path, sinogram_input, cmap='gray')
+    plt.imsave(out_path, sinogram_output, cmap='gray')
+
+    try:
+        recon_input = _fbp_reconstruct(sinogram_input)
+        recon_output = _fbp_reconstruct(sinogram_output)
+
+        rmin = min(float(recon_input.min()), float(recon_output.min()))
+        rmax = max(float(recon_input.max()), float(recon_output.max()))
+        if rmax > rmin:
+            recon_input = (recon_input - rmin) / (rmax - rmin)
+            recon_output = (recon_output - rmin) / (rmax - rmin)
+
+        plt.imsave(os.path.join(batch_dir, 'reconstruction_input.png'), recon_input, cmap='gray')
+        plt.imsave(os.path.join(batch_dir, 'reconstruction_output.png'), recon_output, cmap='gray')
+    except Exception as exc:
+        print(f"  FBP image export failed ({exc}); saved sinogram PNGs only")
+
+
 def test_final_overall(args_final,
                        args_seq,
                        args_diff,
@@ -401,6 +430,9 @@ def test_final(args_final,
 
                 # Visualization
                 if save_flag:
+                    _save_eval_images(batch_dir,
+                                  masked_sino_batch[i],
+                                  recon_2d)
                     _save_overview(os.path.join(batch_dir, 'overview.png'),
                                    full_sino_np,
                                    masked_sino_batch[i],
