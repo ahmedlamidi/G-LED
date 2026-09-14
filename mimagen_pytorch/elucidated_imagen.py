@@ -110,6 +110,7 @@ class ElucidatedImagen(nn.Module):
             S_noise=1.003,
             physics_loss_weight=0.1,  # weight for physics-informed loss: p(s, θ) = p(-s, θ + 180°)
             physics_sigma_threshold=1.0,  # only apply physics loss when sigma < this value
+            physics_anchor='selected',  # 'selected' = anchor symmetry on the measured angles, 'global' = all row pairs
     ):
         super().__init__()
 
@@ -213,6 +214,9 @@ class ElucidatedImagen(nn.Module):
         
         self.physics_loss_weight = physics_loss_weight
         self.physics_sigma_threshold = physics_sigma_threshold
+        assert physics_anchor in ('selected', 'global'), \
+            f"physics_anchor must be 'selected' or 'global', got {physics_anchor}"
+        self.physics_anchor = physics_anchor
 
         # elucidating parameters
 
@@ -822,7 +826,7 @@ class ElucidatedImagen(nn.Module):
             unet_number=None,
             cond_images=None,
             total_angles=720,
-            cond_indices=None,       # legacy (unused with mask conditioning)
+            cond_indices=None,       # anchors the physics loss on the measured angles
             label_indices=None,      # legacy (unused with mask conditioning)
             original_pred_h=None,    # legacy (unused with mask conditioning)
             original_cond_h=None,    # legacy (unused with mask conditioning)
@@ -998,12 +1002,45 @@ class ElucidatedImagen(nn.Module):
             low_noise_mask = sigmas < self.physics_sigma_threshold  # [B]
 
             if low_noise_mask.any():
-                # Full-sinogram symmetry: p(θ, s) = p(θ + 180°, -s)
+                # Conjugate-ray symmetry: p(θ, s) = p(θ + 180°, -s), where
+                # θ + 180° is half the rows further down the sinogram and -s is
+                # a flip along the detector axis.
                 denoised_low = denoised_images[low_noise_mask]
                 half = total_angles // 2
-                first_half  = denoised_low[..., :half, :]
-                second_half = denoised_low[..., half:, :]
-                physics_loss = F.mse_loss(first_half, torch.flip(second_half, dims=[-1]))
+
+                use_selected = (
+                    self.physics_anchor == 'selected'
+                    and exists(cond_indices)
+                    and len(cond_indices) > 0
+                )
+
+                if use_selected:
+                    # Anchor the constraint on the angles that were actually
+                    # measured. Every anchor row is conditioning the model has
+                    # seen, so tying it to its conjugate partner transports
+                    # measured information into an unmeasured row.
+                    #
+                    # Comparing all 360 row pairs instead (the `else` branch)
+                    # is mostly vacuous under sparse coverage: with 9 measured
+                    # views, 351 of the 360 pairs put one hallucinated row
+                    # against another, which the model can satisfy by being
+                    # self-consistently wrong while diluting the gradient from
+                    # the pairs that carry real information.
+                    anchors = torch.as_tensor(cond_indices, dtype=torch.long,
+                                              device=denoised_low.device)
+                    anchors = anchors[anchors < total_angles]
+                    partners = (anchors + half) % total_angles
+                    pred_anchor  = denoised_low[..., anchors, :]
+                    pred_partner = denoised_low[..., partners, :]
+                    physics_loss = F.mse_loss(pred_anchor,
+                                              torch.flip(pred_partner, dims=[-1]))
+                else:
+                    # physics_anchor='global' (or no selection given): symmetry
+                    # over the whole sinogram, with the angular selection
+                    # playing no part in the physics term.
+                    first_half  = denoised_low[..., :half, :]
+                    second_half = denoised_low[..., half:, :]
+                    physics_loss = F.mse_loss(first_half, torch.flip(second_half, dims=[-1]))
 
         # ── Combine losses ────────────────────────────────────────────
         data_loss = losses.mean()

@@ -1,0 +1,20 @@
+{
+  "bfs_dynamic_folder": "best_model_folder/720_816_limited180_PHYSICS_ONLY",
+  "Nt_read": 40,
+  "use_best": true,
+  "Nepoch_read": 2,
+  "trajec_max_len": 151,
+  "start_n": 9500,
+  "n_span": 152,
+  "test_Nt": 1,
+  "batch_size": 1,
+  "num_sample_steps": 20,
+  "timing_only": false,
+  "device": "cuda:0",
+  "sample_H": 720,
+  "detector_count": 816,
+  "data_path": "AAPM_dataset/patient_1",
+  "angle_start": 0,
+  "angle_end": 90,
+  "angle_stride": 10
+}
