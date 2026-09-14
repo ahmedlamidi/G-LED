@@ -4,7 +4,7 @@
 # (see baselines/README.md). Run from anywhere on the login node:
 #
 #   baselines/run_all.sh
-#   DATA_ROOT=data/AAPM_dataset PARTITION=general baselines/run_all.sh
+#   DATA_ROOT=/other/path/LIDC-IDRI PARTITION=general baselines/run_all.sh
 #
 #   prepare ─┬─ fbp/run.sh, sart/run.sh, tv/run.sh
 #            ├─ fbpconvnet/run.sh
