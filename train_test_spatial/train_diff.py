@@ -139,7 +139,10 @@ def train_epoch(diff_args, seq_args, trainer, data_loader, down_sampler, up_samp
             cond_images=batch_cond,
             unet_number=1,
             ignore_time=False,
-            total_angles=H
+            total_angles=H,
+            # Anchors the conjugate-ray symmetry loss on the measured angles
+            # rather than over the whole sinogram.
+            cond_indices=cond_indices
         )
         trainer.update(unet_number=1)
 

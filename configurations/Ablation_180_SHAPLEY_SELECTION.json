@@ -1,5 +1,5 @@
 {
-  "bfs_dynamic_folder": "best_model_folder/720_816_limited180_k10_PIML",
+  "bfs_dynamic_folder": "best_model_folder/720_816_limited180_SHAPLEY_SELECTION",
   "Nt_read": 40,
   "use_best": true,
   "Nepoch_read": 2,
@@ -14,7 +14,7 @@
   "sample_H": 720,
   "detector_count": 816,
   "data_path": "AAPM_dataset/patient_1",
-  "angle_start": 0,
-  "angle_end": 180,
+  "angle_start": 240,
+  "angle_end": 325,
   "angle_stride": 10
 }

@@ -1,5 +1,5 @@
 {
-  "bfs_dynamic_folder": "best_model_folder/720_816_limited45_k10_PIML",
+  "bfs_dynamic_folder": "best_model_folder/720_816_limited180_PHYSICS_ONLY",
   "Nt_read": 40,
   "use_best": true,
   "Nepoch_read": 2,
@@ -15,6 +15,6 @@
   "detector_count": 816,
   "data_path": "AAPM_dataset/patient_1",
   "angle_start": 0,
-  "angle_end": 45,
+  "angle_end": 90,
   "angle_stride": 10
 }

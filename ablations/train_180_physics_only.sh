@@ -1,5 +1,5 @@
 #!/bin/bash -l
-#SBATCH --job-name=abl-45k10-piml
+#SBATCH --job-name=abl-180-physics
 #SBATCH -p general
 #SBATCH --cpus-per-task=2
 #SBATCH --time=24:00:00
@@ -8,16 +8,24 @@
 #SBATCH --mail-user=ahmedlamidi@usf.edu
 #SBATCH --mem=64G
 #
-# BASELINE for the 45 deg case: 45 deg coverage, every 10th view, physics loss ON.
+# PHYSICS ONLY at 180 deg.
 #
-# The 2x2 ablation grid is coverage {45, 180} x physics loss {on, off}.
-# Every script in ablations/ is identical apart from the block marked
-# "ABLATION KNOBS" below, so any difference in the results is attributable
-# to those two variables alone.
+# Condition : the selected angles, every 10th index inside 0-180 deg
+#             -> 36 of 720 views
+# Physics   : on, anchored on the conditioned rows
 #
-#   sbatch ablations/train_45k10_piml.sh
-#   RESUME=1 sbatch ablations/train_45k10_piml.sh     # continue after the 24h wall clock
-#   INSTALL_DEPS=1 sbatch ablations/train_45k10_piml.sh
+# The four ablations are two coverage cases (45 deg, 180 deg) x two experiment
+# types. Both types condition on the same sparse-10 selection, so within a
+# coverage case the physics loss is the only thing that differs:
+#
+#   shapley selection : conditioned on the selected angles, physics loss off
+#   physics only      : same condition, physics loss on
+#
+# Everything outside the "ABLATION KNOBS" block is identical across the four.
+#
+#   sbatch ablations/train_180_physics_only.sh
+#   RESUME=1 sbatch ablations/train_180_physics_only.sh     # continue after the 24h wall clock
+#   INSTALL_DEPS=1 sbatch ablations/train_180_physics_only.sh
 
 cd "$SLURM_SUBMIT_DIR"
 mkdir -p logs
@@ -30,20 +38,20 @@ export TEMP=/home/a/ahmedlamidi/tmp
 export TMP=/home/a/ahmedlamidi/tmp
 
 # ── ABLATION KNOBS ──────────────────────────────────────────────────────────
-# Coverage is a contiguous arc starting at 0 deg; stride 10 means every 10th
-# index, and at sample_H = 720 one index is 0.5 deg, so stride 10 = every 5 deg.
-RUN_FOLDER=output/720_816_limited45_k10_PIML
+# At sample_H = 720 one index is 0.5 deg, so stride 10 keeps every 10th index,
+# i.e. one view per 5 deg.
+RUN_FOLDER=output/720_816_limited180_PHYSICS_ONLY
 ANGLE_START=0
-ANGLE_END=45            # -> 9 of 720 views
-ANGLE_STRIDE=10
-PHYSICS_LOSS_WEIGHT=0.1   # 0.1 = conjugate-ray symmetry loss on, 0 = off
-
+ANGLE_END=180
+ANGLE_STRIDE=10           # -> 36 of 720 views
+PHYSICS_LOSS_WEIGHT=0.1
+PHYSICS_ANCHOR=selected   # anchor the symmetry on the conditioned rows
 # Held fixed across the whole grid, so the runs stay comparable.
 BATCH_SIZE=8
 EPOCH_NUM=500
 UNET_DIM=32
 WANDB_PROJECT="sinogram-ablations"
-WANDB_RUN_NAME="abl-45k10-piml"
+WANDB_RUN_NAME="abl-45-shapley"
 # ────────────────────────────────────────────────────────────────────────────
 
 # Call the env's interpreter by absolute path so srun cannot fall back to
@@ -135,6 +143,7 @@ srun --export=ALL "$PY" main_diff_bfs.py \
 	--angle_end "$ANGLE_END" \
 	--angle_stride "$ANGLE_STRIDE" \
 	--physics_loss_weight "$PHYSICS_LOSS_WEIGHT" \
+	--physics_anchor "$PHYSICS_ANCHOR" \
 	--batch_size "$BATCH_SIZE" \
 	--epoch_num "$EPOCH_NUM" \
 	--unet_dim "$UNET_DIM" \

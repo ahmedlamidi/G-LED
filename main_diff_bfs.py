@@ -74,6 +74,10 @@ class Args:
 		"""
 		self.parser.add_argument("--physics_loss_weight", type=float, default=0.1,
 								 help='weight of the conjugate-ray symmetry loss; 0 turns it off')
+		self.parser.add_argument("--physics_anchor", type=str, default='selected',
+								 choices=['selected', 'global'],
+								 help="'selected' anchors the symmetry on the conditioned rows, "
+									  "'global' uses every row pair of the sinogram")
 		"""
 		for run bookkeeping
 		"""
@@ -164,7 +168,8 @@ if __name__ == '__main__':
 		S_noise = 1.003,
 		condition_on_text = False,
 		auto_normalize_img = False,  # Han Gao make it false
-		physics_loss_weight = diff_args.physics_loss_weight
+		physics_loss_weight = diff_args.physics_loss_weight,
+		physics_anchor = diff_args.physics_anchor
 		).to(torch.device(diff_args.device))
 	trainer = ImagenTrainer(imagen, device=torch.device(diff_args.device), fp16=True)
 	
@@ -197,6 +202,7 @@ if __name__ == '__main__':
 			"angle_stride": diff_args.angle_stride,
 			"n_cond_views": len(cond_indices),
 			"physics_loss_weight": diff_args.physics_loss_weight,
+			"physics_anchor": diff_args.physics_anchor,
 		}
 	)
 
