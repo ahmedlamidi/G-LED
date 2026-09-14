@@ -1,7 +1,8 @@
 """Build the data every baseline reads.
 
-Patients are the folders under --data_root in natural sort order: the first 7
-train, the next 1 validation, the last 2 test. For each split this writes, under
+Patients are the LIDC-IDRI folders under --data_root in natural sort order
+(LIDC-IDRI-0001 ... 0010): the first 7 train, the next 1 validation, the next 2
+test. Only their CT series are used. For each split this writes, under
 <cache_root>/<setting>/<split>/:
 
   slices.json   one entry per slice: id, patient, series, slice, sinogram path
@@ -13,7 +14,7 @@ and, once per setting, split.json, stats.json and K.npy (FBP of an all-ones
 sinogram, see common/ct.py). Sinograms are made by SD-Flow's own dicom_dataset,
 so every method starts from exactly SD-Flow's input.
 
-    python -m baselines.prepare_data --data_root data
+    python -m baselines.prepare_data --data_root data/LIDC-IDRI
 """
 import argparse
 import json
@@ -108,7 +109,8 @@ def _stats(sd, offset, op_norm_sq, rls_beta, cond, n_sample=256):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_common_args(parser)
-    parser.add_argument('--data_root', default='data', help='folder holding one subfolder per patient')
+    parser.add_argument('--data_root', default=os.path.join('data', 'LIDC-IDRI'),
+                        help='folder holding one subfolder per patient (LIDC-IDRI layout)')
     parser.add_argument('--patients', default=None,
                         help='comma-separated patient folders in split order; skips discovery')
     parser.add_argument('--exclude', default=','.join(splits.DEFAULT_EXCLUDE),

@@ -14,9 +14,11 @@ data, measured views and label:
 
 ## What is shared, so the comparison is fair
 
-* **Data split.** The patient folders under `data/` in natural sort order: the
-  first 7 train, the next 1 validation, the last 2 test. Low-dose series are
-  skipped. `prepare_data.py` writes the split to
+* **Data split.** LIDC-IDRI-0001 to 0010 from `data/LIDC-IDRI` (the first 10
+  patient folders in natural order): 0001-0007 train, 0008 validation, 0009-0010
+  test. Only CT series are read. The chest X-rays (DX/CR) and nodule
+  segmentations (SEG) stored with each patient are skipped.
+  `prepare_data.py` writes the split to
   `data/baselines_cache/<setting>/split.json`; check it before trusting results.
 * **Input.** Sinograms come from SD-Flow's own `dicom_dataset`
   (`data/dicom_preprocess.py`): 720 views x 816 detectors, each normalized to
@@ -54,7 +56,7 @@ depend only on what's listed in the "After" column.
 
 Details:
 * Pass extra arguments after the script, e.g. `sbatch baselines/tv/run.sh --tune_slices 16`.
-* Set the patient folder with `DATA_ROOT` (default `data`) and training time with
+* Set the patient folder with `DATA_ROOT` (default `data/LIDC-IDRI`) and training time with
   `TRAIN_HOURS` (FBPConvNet 12, DOLCE and SWORD 22).
 * A job that stops early can simply be resubmitted: training resumes from
   `last.pt` and sampling skips slices already done. Longer training
