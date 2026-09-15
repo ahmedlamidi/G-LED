@@ -81,7 +81,8 @@ fi
 
 # srun python main_diff_bfs.py --resume
 # srun python data/dicom_preprocess.py
-srun --export=ALL "$PY" main_diff_eval_bfs.py
+# extra arguments go to the eval script, e.g. sbatch train_model.sh --config configurations/Compare_LIDC0009.json
+srun --export=ALL "$PY" main_diff_eval_bfs.py "$@"
 # srun python validation/compare_sparse_methods_with_1062.py
 # srun --export=ALL "$PY" main_diff_bfs.py --resume
 # srun --export=ALL "$PY" data/dicom_preprocess.py

@@ -52,6 +52,7 @@ depend only on what's listed in the "After" column.
 | DOLCE sample | `sbatch baselines/dolce/sample.sh` | DOLCE train | ~4 h |
 | SWORD train | `sbatch baselines/sword/train.sh full` and `... high` | prepare | 22 h each, in parallel |
 | SWORD sample | `sbatch baselines/sword/sample.sh` | both SWORD trains | ~5 h |
+| SD-Flow sample | `sbatch baselines/sdflow/sample.sh --config configurations/<run>.json` | prepare, a trained SD-Flow | depends on its sampling steps |
 | Table + figures | `sbatch baselines/evaluate.sh` | whatever is done | minutes |
 
 Details:
@@ -67,15 +68,21 @@ Details:
 
 ## Adding SD-Flow to the table
 
-Evaluate SD-Flow on each test series with the same angles (`angle_start 0`,
-`angle_end 45`, `angle_stride 10` in the config JSON, `data_path` pointing at
-the series folder), then:
+`baselines/sdflow/sample.py` runs SD-Flow on the same test slices as the
+baselines, with the model folder, measured views and sampling steps of an
+SD-Flow config (the conditioning and sampler of `main_diff_eval_bfs.py`), and
+writes `output/baselines/<setting>/sdflow/recon/` like any other method:
 
 ```bash
-python -m baselines.evaluate \
-  --sdflow "SD-Flow=best_model_folder/<run>/diffusion_folder/<series1>/contour,best_model_folder/<run>/diffusion_folder/<series2>/contour" \
-  --sdflow "Physics only=..."
+sbatch baselines/sdflow/sample.sh --config configurations/<run>.json
+sbatch baselines/sdflow/sample.sh --config configurations/<other>.json --name sdflow_other   # a second variant
+sbatch baselines/evaluate.sh                                     # SD-Flow is in the default --methods
+sbatch baselines/evaluate.sh --methods fbp,dolce,sdflow,sdflow_other
 ```
+
+SD-Flow may use other views than the baselines; `summary.md` lists them.
+Existing `main_diff_eval_bfs.py` outputs can still be imported with
+`--sdflow "NAME=<diffusion_folder>/<series>/contour"`.
 
 Results are written to `output/baselines/<setting>/evaluation/`:
 - `summary.md` / `summary.csv`: mean ± std over the slices every method has

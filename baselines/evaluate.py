@@ -16,6 +16,7 @@ import argparse
 import csv
 import glob
 import hashlib
+import json
 import os
 
 import matplotlib
@@ -32,7 +33,7 @@ from .common.metrics import ct_metrics  # noqa: E402
 from .common.runtime import evenly_spaced  # noqa: E402
 
 BASELINES = {'fbp': 'FBP', 'tv': 'TV', 'sart': 'SART', 'fbpconvnet': 'FBP-ConvNet',
-             'dolce': 'DOLCE', 'sword': 'SWORD'}
+             'dolce': 'DOLCE', 'sword': 'SWORD', 'sdflow': 'SD-Flow'}
 # Display windows as (level, width) in HU
 WINDOWS = {'lung': (-600, 1500), 'soft': (40, 400), 'bone': (400, 1800)}
 
@@ -216,6 +217,12 @@ def main():
             print(f'{name}: no {args.split} reconstructions, skipped')
             continue
         scores[key] = {}
+        views_path = os.path.join(args.out_root, setting_tag(args), key, 'views.json')   # written by sdflow/sample.py
+        if os.path.exists(views_path):
+            with open(views_path) as f:
+                rows = json.load(f)['cond_indices']
+            if rows != cond:
+                view_notes.append(f'{name}: {describe_views(rows)}')
         for f in files:
             sid = os.path.basename(f)[:-4]
             scores[key][sid] = ct_metrics(np.load(f), test.image('label', index[sid]))
