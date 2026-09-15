@@ -25,11 +25,9 @@ import numpy as np
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 
-from skimage.filters import threshold_otsu  # noqa: E402
-
 from .common.config import SAMPLE_H, add_common_args, cond_indices, method_dir, setting_dir, setting_tag  # noqa: E402
 from .common.data import SplitData, load_offset  # noqa: E402
-from .common.metrics import ct_metrics  # noqa: E402
+from .common.metrics import METRICS, body_mask, ct_scores, to_hu, water_level  # noqa: E402
 from .common.runtime import evenly_spaced  # noqa: E402
 
 BASELINES = {'fbp': 'FBP', 'tv': 'TV', 'sart': 'SART', 'fbpconvnet': 'FBP-ConvNet',
@@ -100,27 +98,9 @@ def import_sdflow(args, name, dirs, test):
     return key, views
 
 
-def water_level(mu):
-    """Soft-tissue level of an image proportional to mu with air at 0 (label + K).
-
-    Each sinogram is rescaled on its own, so the images have no fixed HU scale.
-    The most common value above the Otsu air/body threshold inside the field of
-    view is taken as water (0 HU). Display only; the metrics never use it.
-    """
-    n = mu.shape[0]
-    yy, xx = np.mgrid[:n, :n]
-    fov = mu[np.hypot(yy - (n - 1) / 2, xx - (n - 1) / 2) < 0.45 * n]
-    body = fov[fov > threshold_otsu(fov)]
-    hist, edges = np.histogram(body, bins=200)
-    k = int(np.convolve(hist, np.ones(5) / 5, mode='same').argmax())
-    return 0.5 * (edges[k] + edges[k + 1])
-
-
 def body_box(hu, margin=12):
-    """Rows and columns around the body (above -500 HU) inside the field of view."""
-    n = hu.shape[0]
-    yy, xx = np.mgrid[:n, :n]
-    mask = (hu > -500) & (np.hypot(yy - (n - 1) / 2, xx - (n - 1) / 2) < 0.47 * n)
+    """Rows and columns around the body (the metrics' body mask)."""
+    mask = body_mask(hu)
     if not mask.any():
         return slice(None), slice(None)
     rows, cols = np.where(mask.any(1))[0], np.where(mask.any(0))[0]
@@ -137,7 +117,7 @@ def slice_panels(sid, present, data, index, offset, args):
     water = water_level(label + offset)
 
     def hu(mu):
-        return 1000 * (mu / water - 1)
+        return to_hu(mu, water)
 
     # RLS fits y = s + 1, so it is already in label + K units
     panels = [('rls_input', 'RLS input', hu(data.image('rls', i)))]
@@ -149,21 +129,25 @@ def slice_panels(sid, present, data, index, offset, args):
     return panels, body_box(panels[-1][2])
 
 
-def draw(sid, panels, box, windows, out_dir):
-    """Preview: one column per image (order in columns.txt), one row per window.
-    No method names or scores; those are in per_slice.csv."""
+def draw(sid, panels, box, windows, scores, out_dir):
+    """Overview of one slice: one column per image, one row per window, each
+    method titled with its SSIM and PSNR inside the body (in HU)."""
     crop_h, crop_w = panels[-1][2][box].shape
     fig, axes = plt.subplots(len(windows), len(panels),
-                             figsize=(2.9 * len(panels), 2.9 * crop_h / crop_w * len(windows) + 0.4), squeeze=False)
+                             figsize=(2.9 * len(panels), 2.9 * crop_h / crop_w * len(windows) + 1.0), squeeze=False)
     for r, w in enumerate(windows):
         level, width = WINDOWS[w]
-        for c, (_, _, img) in enumerate(panels):
+        for c, (key, name, img) in enumerate(panels):
             ax = axes[r, c]
             ax.imshow(img[box], cmap='gray', vmin=level - width / 2, vmax=level + width / 2)
             ax.set_xticks([])
             ax.set_yticks([])
+            if r == 0:
+                m = scores.get(key, {}).get(sid)
+                ax.set_title(name if m is None else f'{name}\nSSIM {m["ssim_body"]:.3f}, {m["psnr_body"]:.2f} dB',
+                             fontsize=10)
         axes[r, 0].set_ylabel(f'{w}\nL {level}, W {width} HU', fontsize=10)
-    fig.suptitle(sid, fontsize=10)
+    fig.suptitle(f'{sid}: SSIM / PSNR inside the body, in HU (per_slice.csv has every metric)', fontsize=10)
     fig.tight_layout()
     fig.savefig(os.path.join(out_dir, f'compare_{sid}.png'), dpi=110, bbox_inches='tight')
     plt.close(fig)
@@ -227,6 +211,15 @@ def main():
             view_notes.append(f'{name}: ' + '; '.join(describe_views(v) for v in sorted(views)))
 
     index = {sid: i for i, sid in enumerate(test.ids)}
+    offset = load_offset(setting_dir(args))
+    waters = {}   # HU calibration of each slice, from its label only
+
+    def score(pred, sid):
+        label = test.image('label', index[sid])
+        if sid not in waters:
+            waters[sid] = water_level(label + offset)
+        return ct_scores(pred, label, offset, waters[sid])
+
     scores = {}
     for key, name in methods:
         files = sorted(glob.glob(os.path.join(args.out_root, setting_tag(args), key, recon_name(args.split), '*.npy')))
@@ -243,7 +236,7 @@ def main():
                 view_notes.append(f'{name}: {describe_views(rows)}')
         for f in files:
             sid = os.path.basename(f)[:-4]
-            scores[key][sid] = ct_metrics(np.load(f), test.image('label', index[sid]))
+            scores[key][sid] = score(np.load(f), sid)
     present = [(k, n) for k, n in methods if k in scores]
     if not present:
         raise SystemExit('nothing to evaluate')
@@ -251,28 +244,34 @@ def main():
     if not common:
         raise SystemExit(f'the methods share no {args.split} slices')
 
+    keys = [k for k, _ in METRICS]
     with open(os.path.join(report_dir, 'per_slice.csv'), 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['method', 'slice_id', 'patient', 'slice', 'psnr', 'ssim', 'mse'])
+        writer.writerow(['method', 'slice_id', 'patient', 'slice'] + keys)
         for key, name in present:
             for sid in sorted(scores[key], key=index.get):
                 m, s = scores[key][sid], test.slices[index[sid]]
-                writer.writerow([name, sid, s['patient'], s['slice'], m['psnr'], m['ssim'], m['mse']])
+                writer.writerow([name, sid, s['patient'], s['slice']] + [m[k] for k in keys])
 
-    rows = []
-    for key, name in present:
-        psnr = np.array([scores[key][sid]['psnr'] for sid in common])
-        ssim = np.array([scores[key][sid]['ssim'] for sid in common])
-        rows.append((name, psnr.mean(), psnr.std(), ssim.mean(), ssim.std()))
+    stats = {key: {k: (float(np.mean([scores[key][sid][k] for sid in common])),
+                       float(np.std([scores[key][sid][k] for sid in common]))) for k in keys}
+             for key, _ in present}
     with open(os.path.join(report_dir, 'summary.csv'), 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['method', 'psnr_mean', 'psnr_std', 'ssim_mean', 'ssim_std', 'n_slices'])
-        for row in rows:
-            writer.writerow(list(row) + [len(common)])
+        writer.writerow(['method'] + [f'{k}_{s}' for k in keys for s in ('mean', 'std')] + ['n_slices'])
+        for key, name in present:
+            writer.writerow([name] + [v for k in keys for v in stats[key][k]] + [len(common)])
+
+    def cell(k, mean, std):
+        return f'{mean:.3f} ± {std:.3f}' if k.startswith('ssim') else f'{mean:.2f} ± {std:.2f}'
+
     lines = [f'{args.split.capitalize()} slices: {len(common)} (common to every method), measured rows: '
              f'{args.angle_start:g}-{args.angle_end:g} deg, every {args.angle_stride}th view ({len(cond)} views)',
-             '', '| Method | PSNR (dB) | SSIM |', '|---|---|---|']
-    lines += [f'| {n} | {pm:.2f} ± {ps:.2f} | {sm:.4f} ± {ss:.4f} |' for n, pm, ps, sm, ss in rows]
+             '', '| Method | ' + ' | '.join(t for _, t in METRICS) + ' |', '|---' * (len(METRICS) + 1) + '|']
+    lines += [f'| {name} | ' + ' | '.join(cell(k, *stats[key][k]) for k in keys) + ' |' for key, name in present]
+    lines += ['', "body: inside the patient (label above -500 HU); HU: the whole image. Both in HU from each slice's "
+              'label (air 0, soft-tissue peak 0 HU), clipped to [-1000, 1000] HU. legacy: '
+              'validation/compare_ssim.py (label min/max, whole image), which rates every method high.']
     partial = [f'{n}: {len(scores[k])}' for k, n in present if len(scores[k]) != len(common)]
     if partial:
         lines += ['', 'Slices per method before intersecting: ' + ', '.join(partial)]
@@ -282,7 +281,6 @@ def main():
         f.write('\n'.join(lines) + '\n')
     print('\n'.join(lines))
 
-    offset = load_offset(setting_dir(args))
     windows = [w for w in args.windows.split(',') if w]
     if args.export_slice:
         sid = args.export_slice
@@ -307,7 +305,7 @@ def main():
             print(f'unknown slice id {sid}, skipped')
             continue
         panels, box = slice_panels(sid, present, test, index, offset, args)
-        draw(sid, panels, box, windows, fig_dir)
+        draw(sid, panels, box, windows, scores, fig_dir)
         if n % 25 == 0 or n == len(fig_ids):
             print(f'previews: {n}/{len(fig_ids)}')
     print(f'Report: {report_dir}')
