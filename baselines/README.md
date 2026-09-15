@@ -31,8 +31,8 @@ data, measured views and label:
   PSNR follow `validation/compare_ssim.py`: normalize by the label's min/max,
   use data_range 1.
 * **Pairing.** `evaluate.py` matches SD-Flow outputs to test slices by their
-  ground-truth sinogram, not by folder order. It refuses a run made with
-  different measured rows.
+  ground-truth sinogram, not by folder order. SD-Flow may use other measured
+  views than the baselines; `summary.md` then lists each run's views.
 * **Tuning.** Every free parameter is chosen on the validation patient, never on test.
 
 ## Running (GAIVI)

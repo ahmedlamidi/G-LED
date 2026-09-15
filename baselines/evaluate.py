@@ -1,10 +1,10 @@
 """Score every method on the same test slices against the same label, and draw
-comparison figures with one display window for all panels.
+comparison figures with the same HU display windows for all panels.
 
 Metrics follow validation/compare_ssim.py (CT part). SD-Flow runs (the contour/
 folders main_diff_eval_bfs.py writes) are matched to test slices by their
-ground-truth sinogram, not by folder index, and are refused if they were run
-with different measured rows.
+ground-truth sinogram, not by folder index. They may use other measured views
+than the baselines; summary.md lists each run's views.
 
     python -m baselines.evaluate
     python -m baselines.evaluate --sdflow "SD-Flow=best_model_folder/<run>/diffusion_folder/<series>/contour"
@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from skimage.filters import threshold_otsu  # noqa: E402
 
-from .common.config import add_common_args, cond_indices, method_dir, setting_dir, setting_tag  # noqa: E402
+from .common.config import SAMPLE_H, add_common_args, cond_indices, method_dir, setting_dir, setting_tag  # noqa: E402
 from .common.data import SplitData, load_offset  # noqa: E402
 from .common.metrics import ct_metrics  # noqa: E402
 from .common.runtime import evenly_spaced  # noqa: E402
@@ -46,8 +46,18 @@ def _fingerprint(sino):
     return hashlib.sha1(np.ascontiguousarray(sino, dtype=np.float32).tobytes()).hexdigest()
 
 
-def import_sdflow(args, name, dirs, test, cond):
-    """Turn an SD-Flow run into recon/<slice id>.npy images like the baselines'."""
+def describe_views(rows):
+    """'9 views, 0-40 deg every 5 deg' for a list of sinogram rows."""
+    step = 360 / SAMPLE_H
+    rows = list(rows)
+    if len(rows) > 1 and len(set(np.diff(rows))) == 1:
+        return f'{len(rows)} views, {rows[0] * step:g}-{rows[-1] * step:g} deg every {(rows[1] - rows[0]) * step:g} deg'
+    return f'{len(rows)} views (rows {rows})'
+
+
+def import_sdflow(args, name, dirs, test):
+    """Turn an SD-Flow run into recon/<slice id>.npy images like the baselines'.
+    Returns the method key and the set of measured-row lists the run used."""
     from .common.ct import full_fbp
 
     key = 'sdflow_' + ''.join(ch if ch.isalnum() else '_' for ch in name).strip('_').lower()
@@ -61,6 +71,7 @@ def import_sdflow(args, name, dirs, test, cond):
     thumbs = np.stack(thumbs)
 
     matched = unmatched = 0
+    views = set()
     for folder in dirs:
         batch_dirs = sorted(glob.glob(os.path.join(folder, 'batch*')))
         if not batch_dirs:
@@ -69,13 +80,7 @@ def import_sdflow(args, name, dirs, test, cond):
             gt = np.load(os.path.join(bdir, 'ground_truth_full.npy')).astype(np.float32)
             cond_path = os.path.join(bdir, 'cond_indices.npy')
             if os.path.exists(cond_path):
-                run_cond = np.load(cond_path).tolist()
-                if run_cond != cond:
-                    raise SystemExit(
-                        f'{name}: {bdir} was run with {len(run_cond)} measured rows starting {run_cond[:3]}, '
-                        f'but the baselines use {len(cond)} rows starting {cond[:3]}. Re-run the SD-Flow '
-                        f'evaluation with angle_start={args.angle_start:g}, angle_end={args.angle_end:g}, '
-                        f'angle_stride={args.angle_stride}.')
+                views.add(tuple(np.load(cond_path).tolist()))
             i = by_hash.get(_fingerprint(gt))
             if i is None:
                 # Not bit-identical (e.g. the sinogram was made on another machine): nearest test slice
@@ -89,8 +94,9 @@ def import_sdflow(args, name, dirs, test, cond):
             rec = rec.reshape(rec.shape[-2:])[:gt.shape[0], :gt.shape[1]]
             np.save(os.path.join(recon_dir, test.slices[i]['id'] + '.npy'), full_fbp(rec).astype(np.float32))
             matched += 1
-    print(f'{name}: matched {matched} SD-Flow slices to test slices, {unmatched} not in the test set')
-    return key
+    print(f'{name}: matched {matched} SD-Flow slices to test slices, {unmatched} not in the test set; '
+          + ('; '.join(describe_views(v) for v in sorted(views)) if views else 'no cond_indices.npy found'))
+    return key, views
 
 
 def water_level(mu):
@@ -191,11 +197,15 @@ def main():
     os.makedirs(report_dir, exist_ok=True)
 
     methods = [(m, BASELINES.get(m, m)) for m in args.methods.split(',') if m]
+    view_notes = []
     for spec in args.sdflow:
         name, _, paths = spec.partition('=')
         if not paths:
             raise SystemExit(f'--sdflow expects NAME=DIR, got {spec!r}')
-        methods.append((import_sdflow(args, name, [p for p in paths.split(',') if p], test, cond), name))
+        key, views = import_sdflow(args, name, [p for p in paths.split(',') if p], test)
+        methods.append((key, name))
+        if views and views != {tuple(cond)}:
+            view_notes.append(f'{name}: ' + '; '.join(describe_views(v) for v in sorted(views)))
 
     index = {sid: i for i, sid in enumerate(test.ids)}
     scores = {}
@@ -241,6 +251,8 @@ def main():
     partial = [f'{n}: {len(scores[k])}' for k, n in present if len(scores[k]) != len(common)]
     if partial:
         lines += ['', 'Slices per method before intersecting: ' + ', '.join(partial)]
+    if view_notes:
+        lines += ['', f'Measured views: baselines {describe_views(cond)}; ' + '; '.join(view_notes)]
     with open(os.path.join(report_dir, 'summary.md'), 'w') as f:
         f.write('\n'.join(lines) + '\n')
     print('\n'.join(lines))
