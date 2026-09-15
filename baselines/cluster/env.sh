@@ -52,5 +52,8 @@ fi
 
 run() {
 	echo "Running: python -m $*"
-	srun --export=ALL "$PY" -m "$@"
+	# Python's own temp files go on the node's local disk, not the NFS TMPDIR
+	# above: NFS keeps .nfs* placeholders for open files, so DataLoader worker
+	# cleanup there fails with "Device or resource busy".
+	TMPDIR="${SLURM_TMPDIR:-/tmp}" srun --export=ALL "$PY" -m "$@"
 }

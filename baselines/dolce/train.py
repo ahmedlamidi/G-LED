@@ -96,7 +96,8 @@ def main():
     acp = torch.tensor(alphas_cumprod(cfg['T']), dtype=torch.float32, device=device)
     data = DolceData(SplitData(sd, 'train'), norm)
     loader = DataLoader(data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers,
-                        pin_memory=True, drop_last=len(data) > args.batch_size)
+                        pin_memory=True, drop_last=len(data) > args.batch_size,
+                        persistent_workers=args.workers > 0)
     clock = TrainClock(args.hours, args.segment_hours, hours_before)
     log(f'train {len(data)} slices, {sum(p.numel() for p in model.parameters()) / 1e6:.1f}M parameters, cfg {cfg}')
 

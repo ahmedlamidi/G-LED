@@ -20,3 +20,6 @@ wandb/
 /Comparsion
 /best_model_folder
 /Visualization
+# baseline results copied back from the cluster
+/baselines_snap_*
+/val_mini

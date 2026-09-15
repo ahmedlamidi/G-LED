@@ -107,7 +107,8 @@ def main():
 
     data = Sinograms(train)
     loader = DataLoader(data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers,
-                        pin_memory=True, drop_last=len(data) > args.batch_size)
+                        pin_memory=True, drop_last=len(data) > args.batch_size,
+                        persistent_workers=args.workers > 0)
     clock = TrainClock(args.hours, args.segment_hours, hours_before)
     log(f'sword {args.band}: train {len(data)} slices, '
         f'{sum(p.numel() for p in model.parameters()) / 1e6:.1f}M parameters, cfg {cfg}')

@@ -74,8 +74,10 @@ def main():
     train = Pairs(SplitData(sd, 'train'), args.input, in_norm, out_norm)
     val = Pairs(SplitData(sd, 'val'), args.input, in_norm, out_norm)
     train_loader = DataLoader(train, batch_size=args.batch_size, shuffle=True, num_workers=args.workers,
-                              pin_memory=True, drop_last=len(train) > args.batch_size)
-    val_loader = DataLoader(val, batch_size=args.batch_size, num_workers=args.workers)
+                              pin_memory=True, drop_last=len(train) > args.batch_size,
+                              persistent_workers=args.workers > 0)
+    val_loader = DataLoader(val, batch_size=args.batch_size, num_workers=args.workers,
+                            persistent_workers=args.workers > 0)
 
     model = FBPConvNet(base=args.base).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
