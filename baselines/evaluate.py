@@ -128,9 +128,10 @@ def body_box(hu, margin=12):
             slice(max(cols[0] - margin, 0), cols[-1] + margin + 1))
 
 
-def draw(sid, present, scores, data, index, offset, args, out_dir):
-    """One column per image, one row per display window, all in the HU scale of
-    the slice's label so every panel is shown the same way."""
+def slice_panels(sid, present, data, index, offset, args):
+    """(file name, display name, HU image) for the RLS input, every method that
+    has this slice, and the label, all in the HU scale of the slice's label so
+    every panel is shown the same way; plus the crop around the body."""
     i = index[sid]
     label = data.image('label', i)
     water = water_level(label + offset)
@@ -139,37 +140,51 @@ def draw(sid, present, scores, data, index, offset, args, out_dir):
         return 1000 * (mu / water - 1)
 
     # RLS fits y = s + 1, so it is already in label + K units
-    panels = [('RLS input (DOLCE\'s condition)', hu(data.image('rls', i)), None)]
+    panels = [('rls_input', 'RLS input', hu(data.image('rls', i)))]
     for key, name in present:
         path = os.path.join(args.out_root, setting_tag(args), key, recon_name(args.split), sid + '.npy')
         if os.path.exists(path):
-            panels.append((name, hu(np.load(path) + offset), scores[key].get(sid)))
-    panels.append(('Label', hu(label + offset), None))
-    box = body_box(panels[-1][1])
-    crop_h, crop_w = panels[-1][1][box].shape
+            panels.append((key, name, hu(np.load(path) + offset)))
+    panels.append(('label', 'Label', hu(label + offset)))
+    return panels, body_box(panels[-1][2])
 
-    windows = [w for w in args.windows.split(',') if w]
-    ncol, nrow = len(panels), len(windows)
-    fig, axes = plt.subplots(nrow, ncol, figsize=(2.9 * ncol, 2.9 * crop_h / crop_w * nrow + 1.0), squeeze=False)
+
+def draw(sid, panels, box, windows, out_dir):
+    """Preview: one column per image (order in columns.txt), one row per window.
+    No method names or scores; those are in per_slice.csv."""
+    crop_h, crop_w = panels[-1][2][box].shape
+    fig, axes = plt.subplots(len(windows), len(panels),
+                             figsize=(2.9 * len(panels), 2.9 * crop_h / crop_w * len(windows) + 0.4), squeeze=False)
     for r, w in enumerate(windows):
         level, width = WINDOWS[w]
-        for c, (name, img, m) in enumerate(panels):
+        for c, (_, _, img) in enumerate(panels):
             ax = axes[r, c]
             ax.imshow(img[box], cmap='gray', vmin=level - width / 2, vmax=level + width / 2)
             ax.set_xticks([])
             ax.set_yticks([])
-            if r == 0:
-                ax.set_title(name if m is None else f'{name}\n{m["psnr"]:.2f} dB, SSIM {m["ssim"]:.3f}',
-                             fontsize=10)
         axes[r, 0].set_ylabel(f'{w}\nL {level}, W {width} HU', fontsize=10)
-    s = data.slices[i]
-    fig.suptitle(f'{s["patient"]}, slice {s["slice"]}: {args.angle_start:g}-{args.angle_end:g} deg, '
-                 f'every {args.angle_stride}th view (HU estimated per slice from the label)', fontsize=11)
+    fig.suptitle(sid, fontsize=10)
     fig.tight_layout()
-    stem = os.path.join(out_dir, f'compare_{sid}')
-    fig.savefig(stem + '.png', dpi=200, bbox_inches='tight')
-    fig.savefig(stem + '.pdf', bbox_inches='tight')
+    fig.savefig(os.path.join(out_dir, f'compare_{sid}.png'), dpi=110, bbox_inches='tight')
     plt.close(fig)
+
+
+def export_slice(sid, panels, box, windows, out_dir):
+    """One PDF per image and window, just the cropped image: <name>_<window>.pdf."""
+    os.makedirs(out_dir, exist_ok=True)
+    crop_h, crop_w = panels[-1][2][box].shape
+    for w in windows:
+        level, width = WINDOWS[w]
+        for key, _, img in panels:
+            fig = plt.figure(figsize=(4.0, 4.0 * crop_h / crop_w))
+            ax = fig.add_axes([0, 0, 1, 1])
+            ax.imshow(img[box], cmap='gray', vmin=level - width / 2, vmax=level + width / 2)
+            ax.axis('off')
+            fig.savefig(os.path.join(out_dir, f'{key}_{w}.pdf'))
+            plt.close(fig)
+    with open(os.path.join(out_dir, 'windows.txt'), 'w') as f:
+        f.write(''.join(f'{w}: level {WINDOWS[w][0]} HU, width {WINDOWS[w][1]} HU '
+                        f'(HU estimated per slice from the label)\n' for w in windows))
 
 
 def main():
@@ -180,8 +195,11 @@ def main():
                         help="SD-Flow contour folder(s) written by main_diff_eval_bfs.py")
     parser.add_argument('--split', default='test',
                         help='test, or val to check reconstructions made with the samplers\' --split val')
-    parser.add_argument('--fig_slices', default='', help='comma-separated slice ids to draw')
-    parser.add_argument('--n_fig', type=int, default=3, help='slices to draw when --fig_slices is empty')
+    parser.add_argument('--fig_slices', default='', help='comma-separated slice ids to preview')
+    parser.add_argument('--n_fig', type=int, default=0,
+                        help='preview this many evenly spaced slices when --fig_slices is empty (0 = every shared slice)')
+    parser.add_argument('--export_slice', default='',
+                        help='instead of previews, write one PDF per method and window for this slice id')
     parser.add_argument('--windows', default='lung,soft',
                         help=f'display windows, one figure row each: {", ".join(WINDOWS)}')
     args = parser.parse_args()
@@ -264,15 +282,34 @@ def main():
         f.write('\n'.join(lines) + '\n')
     print('\n'.join(lines))
 
+    offset = load_offset(setting_dir(args))
+    windows = [w for w in args.windows.split(',') if w]
+    if args.export_slice:
+        sid = args.export_slice
+        if sid not in index:
+            raise SystemExit(f'unknown slice id {sid}')
+        panels, box = slice_panels(sid, present, test, index, offset, args)
+        out = os.path.join(report_dir, f'slice_{sid}')
+        export_slice(sid, panels, box, windows, out)
+        print(f'{sid}: {len(panels) * len(windows)} PDFs ({", ".join(k for k, _, _ in panels)}) in {out}')
+        return
+
     fig_dir = os.path.join(report_dir, 'figures')
     os.makedirs(fig_dir, exist_ok=True)
-    fig_ids = [s for s in args.fig_slices.split(',') if s] or [common[j] for j in evenly_spaced(len(common), args.n_fig)]
-    offset = load_offset(setting_dir(args))
-    for sid in fig_ids:
+    fig_ids = [s for s in args.fig_slices.split(',') if s] or (
+        [common[j] for j in evenly_spaced(len(common), args.n_fig)] if args.n_fig else common)
+    names = ['RLS input'] + [n for _, n in present] + ['Label']
+    with open(os.path.join(fig_dir, 'columns.txt'), 'w') as f:
+        f.write('columns, left to right: ' + ', '.join(names) + '\n'
+                + 'rows: ' + ', '.join(f'{w} (L {WINDOWS[w][0]}, W {WINDOWS[w][1]} HU)' for w in windows) + '\n')
+    for n, sid in enumerate(fig_ids, 1):
         if sid not in index:
             print(f'unknown slice id {sid}, skipped')
             continue
-        draw(sid, present, scores, test, index, offset, args, fig_dir)
+        panels, box = slice_panels(sid, present, test, index, offset, args)
+        draw(sid, panels, box, windows, fig_dir)
+        if n % 25 == 0 or n == len(fig_ids):
+            print(f'previews: {n}/{len(fig_ids)}')
     print(f'Report: {report_dir}')
 
 

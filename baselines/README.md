@@ -87,7 +87,10 @@ Existing `main_diff_eval_bfs.py` outputs can still be imported with
 Results are written to `output/baselines/<setting>/evaluation/`:
 - `summary.md` / `summary.csv`: mean ± std over the slices every method has
 - `per_slice.csv`
-- `figures/`: one shared display window for every panel
+- `figures/compare_<slice>.png`: a preview of every shared slice, all methods side
+  by side in HU lung and soft-tissue windows, column order in `figures/columns.txt`
+- `--export_slice <slice id>` instead writes `slice_<slice id>/<method>_<window>.pdf`,
+  one image per method and window, for building the paper figure
 
 ## Implementation notes and deviations
 
