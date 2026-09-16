@@ -86,3 +86,19 @@ def ct_scores(pred, label, offset, water=None):
             'psnr_hu': float(peak_signal_noise_ratio(hl, hp, data_range=hi - lo)),
             'ssim_legacy': legacy['ssim'],
             'psnr_legacy': legacy['psnr']}
+
+
+def sino_scores(pred, gt, cond):
+    """Sinogram-domain SSIM the way test_diff.py reports SD-Flow's: both sinograms
+    normalized by the ground truth's min/max, on the full sinogram and on the
+    unmeasured rows only (nan when fewer than 7 rows are unmeasured)."""
+    pred = np.asarray(pred, dtype=np.float32)
+    gt = np.asarray(gt, dtype=np.float32)
+    lo, hi = gt.min(), gt.max()
+    if hi > lo:
+        pred = (pred - lo) / (hi - lo)
+        gt = (gt - lo) / (hi - lo)
+    unknown = sorted(set(range(gt.shape[0])) - set(cond))
+    return {'ssim_sino': float(structural_similarity(gt, pred, data_range=1.0)),
+            'ssim_sino_unknown': float(structural_similarity(gt[unknown], pred[unknown], data_range=1.0))
+            if len(unknown) >= 7 else float('nan')}

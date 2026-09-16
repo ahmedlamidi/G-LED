@@ -53,6 +53,7 @@ depend only on what's listed in the "After" column.
 | SWORD train | `sbatch baselines/sword/train.sh full` and `... high` | prepare | 22 h each, in parallel |
 | SWORD sample | `sbatch baselines/sword/sample.sh` | both SWORD trains | ~5 h |
 | SD-Flow sample | `sbatch baselines/sdflow/sample.sh --config configurations/<run>.json` | prepare, a trained SD-Flow | depends on its sampling steps |
+| SWORD view sweep | `sbatch baselines/sword/sweep.sh` | both SWORD trains | ~1 h (8 settings x 10 slices) |
 | Table + figures | `sbatch baselines/evaluate.sh` | whatever is done | minutes |
 
 Details:
@@ -65,6 +66,21 @@ Details:
 * `baselines/run_all.sh` submits all of the above at once, with the dependencies.
 * On a GPU machine without SLURM, run
   `python -m baselines.<folder>.<script> --help` directly.
+
+## SWORD over view settings
+
+`baselines/sword/sweep.py` runs the trained SWORD pair (it never sees which
+views are measured, so one pair serves every setting) on 8 settings, arcs from
+0 deg: 45, 90 and 270 deg every row; 360 deg every 2nd, 4th, 8th and 10th row;
+and the baselines' 45 deg every 10th row (its slices are reused from the full
+run when present). 10 evenly spaced test slices per setting, the same ids
+everywhere, and the FBP of the measured views (the FBP baseline) is scored
+next to SWORD at every setting. No RLS is built. Results go to
+`output/baselines/sword_sweep/`: per-setting `<setting>/sword/{recon,sino}/`,
+and in `sweep/` the table (`summary.md`, `summary.csv`, `per_slice.csv`: body,
+HU and legacy image metrics for both, SSIM of SWORD's completed sinogram) and
+`figures/strip_<slice>.png`, an FBP row and a SWORD row per slice with the
+image under every setting next to the label.
 
 ## Adding SD-Flow to the table
 
