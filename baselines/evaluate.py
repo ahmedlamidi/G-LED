@@ -153,6 +153,43 @@ def draw(sid, panels, box, windows, scores, out_dir):
     plt.close(fig)
 
 
+def grid(rows, columns, image, score, window, title, path):
+    """The standard overview: one row per slice, one column per method or
+    setting, the label last; every panel cropped to the body and shown in one
+    HU window; column titles carry the body SSIM.
+
+    rows: list of (row label, label image in HU, body crop); columns: list of
+    (column key, column title); image(key, r) -> HU image or None; score(key, r) -> SSIM or None.
+    """
+    level, width = WINDOWS[window]
+    fig, axes = plt.subplots(len(rows), len(columns) + 1,
+                             figsize=(2.0 * (len(columns) + 1), 1.75 * len(rows) + 0.7), squeeze=False)
+    for r, (name, hu_label, box) in enumerate(rows):
+        for c, (key, ctitle) in enumerate(columns):
+            ax = axes[r, c]
+            ax.set_xticks([])
+            ax.set_yticks([])
+            img = image(key, r)
+            if img is None:
+                ax.set_facecolor('0.9')
+                ax.set_title(f'{ctitle}\nnot done' if r == 0 else 'not done', fontsize=8, color='0.5')
+                continue
+            ax.imshow(img[box], cmap='gray', vmin=level - width / 2, vmax=level + width / 2)
+            m = score(key, r)
+            ax.set_title((f'{ctitle}\nSSIM {m:.2f}' if r == 0 else f'{m:.2f}') if m is not None else
+                         (ctitle if r == 0 else ''), fontsize=8)
+        ax = axes[r, -1]
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.imshow(hu_label[box], cmap='gray', vmin=level - width / 2, vmax=level + width / 2)
+        ax.set_title('Label' if r == 0 else '', fontsize=8)
+        axes[r, 0].set_ylabel(name, fontsize=8)
+    fig.suptitle(f'{title}\nbody SSIM per panel; {window} window L {level} W {width} HU', fontsize=10, wrap=True)
+    fig.tight_layout()
+    fig.savefig(path, dpi=100, bbox_inches='tight')
+    plt.close(fig)
+
+
 def export_slice(sid, panels, box, windows, out_dir):
     """One PDF per image and window, just the cropped image: <name>_<window>.pdf."""
     os.makedirs(out_dir, exist_ok=True)
@@ -308,6 +345,22 @@ def main():
         draw(sid, panels, box, windows, scores, fig_dir)
         if n % 25 == 0 or n == len(fig_ids):
             print(f'previews: {n}/{len(fig_ids)}')
+
+    # the overview grid: --n_fig slices (default 10) x methods, label last
+    grid_ids = [s for s in args.fig_slices.split(',') if s and s in index] or \
+        [common[j] for j in evenly_spaced(len(common), args.n_fig or 10)]
+    rows, hu = [], {}
+    for sid in grid_ids:
+        i = index[sid]
+        label = test.image('label', i)
+        hu_label = to_hu(label + offset, waters[sid])
+        rows.append((sid, hu_label, body_box(hu_label)))
+        for key, _ in present:
+            path = os.path.join(args.out_root, setting_tag(args), key, recon_name(args.split), sid + '.npy')
+            hu[(key, sid)] = to_hu(np.load(path) + offset, waters[sid]) if os.path.exists(path) else None
+    grid(rows, present, lambda key, r: hu[(key, grid_ids[r])],
+         lambda key, r: scores[key].get(grid_ids[r], {}).get('ssim_body'), windows[0],
+         f'{args.split} slices, every method', os.path.join(fig_dir, 'overview.png'))
     print(f'Report: {report_dir}')
 
 

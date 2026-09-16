@@ -46,7 +46,7 @@ from .common.ct import sparse_fbp  # noqa: E402
 from .common.data import SplitData, load_offset  # noqa: E402
 from .common.metrics import METRICS, ct_scores, sino_scores, to_hu, water_level  # noqa: E402
 from .common.runtime import Logger, evenly_spaced  # noqa: E402
-from .evaluate import WINDOWS, body_box  # noqa: E402
+from .evaluate import WINDOWS, body_box, grid  # noqa: E402
 
 # (angle_start, angle_end, angle_stride)
 SETTINGS = [(0, 45, 1), (0, 90, 1), (0, 270, 1),
@@ -299,6 +299,23 @@ def main():
 
     for i, sid in zip(picks, ids):
         strip(sid, i, settings, methods, results, images, base, offset, args.window, fig_dir)
+
+    # one overview grid per method: rows = slices, columns = settings, label last
+    rows, hu = [], {}
+    for i, sid in zip(picks, ids):
+        label = base.image('label', i)
+        water = water_level(label + offset)
+        hu_label = to_hu(label + offset, water)
+        rows.append((sid, hu_label, body_box(hu_label)))
+        for s in settings:
+            for key in methods:
+                img = images(s, key, sid)
+                hu[(s.tag, key, sid)] = to_hu(img + offset, water) if img is not None else None
+    for key in methods:
+        grid(rows, [(s.tag, s.label) for s in settings], lambda tag, r, key=key: hu[(tag, key, ids[r])],
+             lambda tag, r, key=key: results[tag][key].get(ids[r], {}).get('ssim_body'), args.window,
+             f'{NAMES[key]} on every view setting (arc from 0° / row stride)',
+             os.path.join(fig_dir, f'grid_{key}.png'))
     log(f'sweep: report in {report_dir}')
 
 

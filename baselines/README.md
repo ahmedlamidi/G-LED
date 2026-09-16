@@ -96,8 +96,8 @@ the same ids everywhere; no RLS is built for the sweep's own folders.
 Results go to `output/baselines/sword_sweep/`: SWORD's per-setting
 `<setting>/sword/{recon,sino}/`, and in `sweep/` the table (`summary.md`,
 `summary.csv`, `per_slice.csv`: body, HU and legacy image metrics for every
-method, SSIM of the completed sinogram for SWORD) and `figures/strip_<slice>.png`,
-one row per method with the image under every setting next to the label.
+method, SSIM of the completed sinogram for SWORD) `figures/grid_<method>.png` (the overview grid: slices x settings, label last) and
+`figures/strip_<slice>.png`, one row per method with the image under every setting.
 DOLCE's and FBPConvNet's per-setting results stay in `output/baselines/<setting>/`.
 
 ## Adding SD-Flow to the table
@@ -125,6 +125,8 @@ Existing `main_diff_eval_bfs.py` outputs can still be imported with
 Results are written to `output/baselines/<setting>/evaluation/`:
 - `summary.md` / `summary.csv`: mean ± std over the slices every method has
 - `per_slice.csv`
+- `figures/overview.png`: the standard overview grid, 10 evenly spaced slices (rows) x
+  methods (columns) with the label last, body-cropped, one HU window, body SSIM per panel
 - `figures/compare_<slice>.png`: a preview of every shared slice, all methods side
   by side in HU lung and soft-tissue windows, column order in `figures/columns.txt`
 - `--export_slice <slice id>` instead writes `slice_<slice id>/<method>_<window>.pdf`,
