@@ -16,9 +16,9 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from ..common.config import add_common_args, method_dir, setting_dir
+from ..common.config import add_common_args, cond_indices, method_dir, setting_dir
 from ..common.data import Normalizer, SplitData, load_stats
-from ..common.runtime import (Logger, TrainClock, autocast, load_checkpoint, pick_device,
+from ..common.runtime import (Logger, TrainClock, TrainRecord, autocast, load_checkpoint, pick_device,
                               save_checkpoint, seed_everything)
 from .model import FBPConvNet
 
@@ -60,6 +60,8 @@ def main():
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--workers', type=int, default=4)
     parser.add_argument('--hours', type=float, default=12, help='stop after this much training time')
+    parser.add_argument('--patience', type=int, default=15,
+                        help='stop when the validation MSE has not improved for this many epochs (0 = never)')
     args = parser.parse_args()
 
     seed_everything(args.seed)
@@ -88,17 +90,35 @@ def main():
             'in_norm': (in_norm.lo, in_norm.hi), 'out_norm': (out_norm.lo, out_norm.hi)}
 
     last_path = os.path.join(out, 'last.pt')
-    start_epoch, best, hours_before = 0, float('inf'), 0.0
+    start_epoch, best, best_epoch, hours_before = 0, float('inf'), -1, 0.0
     ckpt = load_checkpoint(last_path)
     if ckpt is not None:
         model.load_state_dict(ckpt['model'])
         opt.load_state_dict(ckpt['opt'])
         sched.load_state_dict(ckpt['sched'])
         start_epoch, best, hours_before = ckpt['epoch'] + 1, ckpt['best_val'], ckpt['hours']
+        best_epoch = ckpt.get('best_epoch', -1)
         log(f'resumed after epoch {ckpt["epoch"]}')
     clock = TrainClock(args.hours, args.hours, hours_before)
-    log(f'train {len(train)} slices, val {len(val)} slices, '
-        f'{sum(p.numel() for p in model.parameters()) / 1e6:.1f}M parameters, input {args.input}')
+    n_params = sum(p.numel() for p in model.parameters())
+    log(f'train {len(train)} slices, val {len(val)} slices, {n_params / 1e6:.1f}M parameters, input {args.input}')
+    cond = cond_indices(args.angle_start, args.angle_end, args.angle_stride)
+    record = TrainRecord(out, {
+        'method': 'fbpconvnet',
+        'setting': {'angle_start': args.angle_start, 'angle_end': args.angle_end, 'angle_stride': args.angle_stride,
+                    'n_views': len(cond), 'rows': f'{cond[0]}..{cond[-1]} step {args.angle_stride}'},
+        'data': {'train_slices': len(train), 'val_slices': len(val), 'setting_dir': sd, 'input': args.input,
+                 'in_norm': [in_norm.lo, in_norm.hi], 'out_norm': [out_norm.lo, out_norm.hi]},
+        'model': {'parameters': n_params, 'base': args.base, 'checkpoint_used': 'best.pt (lowest validation MSE)'},
+        'optimizer': {'name': 'Adam', 'lr': args.lr, 'schedule': f'cosine to 0 over {args.epochs} epochs',
+                      'batch_size': args.batch_size, 'grad_clip': 1.0},
+        'loss': {'name': 'MSE',
+                 'formula': f'mean over batch and pixels of (net({args.input}) - label)^2, both globally normalized '
+                            'to about [-1, 1]; validation MSE is the same on the validation patient',
+                 'logged_every': 'epoch'},
+        'stopping': {'epochs_cap': args.epochs, 'hours_cap': args.hours, 'patience_epochs': args.patience or None},
+        'seed': args.seed}, columns=['epoch', 'hours', 'train_mse', 'val_mse'])
+    reason = 'epochs_cap'
 
     for epoch in range(start_epoch, args.epochs):
         running = 0.0
@@ -116,17 +136,26 @@ def main():
 
         v = val_mse(model, val_loader, device)
         if v < best:
-            best = v
+            best, best_epoch = v, epoch
             save_checkpoint(os.path.join(out, 'best.pt'),
                             {'model': model.state_dict(), 'epoch': epoch, 'val_mse': v, 'meta': meta})
         save_checkpoint(last_path, {'model': model.state_dict(), 'opt': opt.state_dict(),
                                     'sched': sched.state_dict(), 'epoch': epoch, 'best_val': best,
-                                    'hours': clock.total(), 'meta': meta})
-        log(f'epoch {epoch}: train MSE {running / max(len(train_loader), 1):.5f}, '
-            f'val MSE {v:.5f}, best {best:.5f} ({clock.total():.2f} h)')
+                                    'best_epoch': best_epoch, 'hours': clock.total(), 'meta': meta})
+        train_mse = running / max(len(train_loader), 1)
+        record.loss(epoch=epoch, hours=clock.total(), train_mse=train_mse, val_mse=v)
+        record.update(clock.segment(), epochs=epoch + 1, best_val_mse=best, best_epoch=best_epoch)
+        log(f'epoch {epoch}: train MSE {train_mse:.5f}, '
+            f'val MSE {v:.5f}, best {best:.5f} at epoch {best_epoch} ({clock.total():.2f} h)')
         if clock.run_over():
+            reason = 'hours_cap'
             log('time budget reached')
             break
+        if args.patience and epoch - best_epoch >= args.patience:
+            reason = 'patience'
+            log(f'no validation improvement for {args.patience} epochs; best.pt is epoch {best_epoch}')
+            break
+    record.finish(reason, clock.segment(), best_val_mse=best, best_epoch=best_epoch)
     open(os.path.join(out, 'train_done'), 'w').close()
 
 

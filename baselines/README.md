@@ -53,7 +53,8 @@ depend only on what's listed in the "After" column.
 | SWORD train | `sbatch baselines/sword/train.sh full` and `... high` | prepare | 22 h each, in parallel |
 | SWORD sample | `sbatch baselines/sword/sample.sh` | both SWORD trains | ~5 h |
 | SD-Flow sample | `sbatch baselines/sdflow/sample.sh --config configurations/<run>.json` | prepare, a trained SD-Flow | depends on its sampling steps |
-| SWORD view sweep | `sbatch baselines/sword/sweep.sh` | both SWORD trains | ~1 h (8 settings x 10 slices) |
+| View sweep | `sbatch baselines/sweep.sh` | both SWORD trains | ~1 h (SWORD on 8 settings x 10 slices) |
+| Per-setting training | `METHOD=dolce sbatch baselines/train_sweep.sh` | prepare | FBPConvNet ~1 day, DOLCE several days, one job at a time |
 | Table + figures | `sbatch baselines/evaluate.sh` | whatever is done | minutes |
 
 Details:
@@ -67,20 +68,33 @@ Details:
 * On a GPU machine without SLURM, run
   `python -m baselines.<folder>.<script> --help` directly.
 
-## SWORD over view settings
+## The baselines over view settings
 
-`baselines/sword/sweep.py` runs the trained SWORD pair (it never sees which
-views are measured, so one pair serves every setting) on 8 settings, arcs from
-0 deg: 45, 90 and 270 deg every row; 360 deg every 2nd, 4th, 8th and 10th row;
-and the baselines' 45 deg every 10th row (its slices are reused from the full
-run when present). 10 evenly spaced test slices per setting, the same ids
-everywhere, and the FBP of the measured views (the FBP baseline) is scored
-next to SWORD at every setting. No RLS is built. Results go to
-`output/baselines/sword_sweep/`: per-setting `<setting>/sword/{recon,sino}/`,
-and in `sweep/` the table (`summary.md`, `summary.csv`, `per_slice.csv`: body,
-HU and legacy image metrics for both, SSIM of SWORD's completed sinogram) and
-`figures/strip_<slice>.png`, an FBP row and a SWORD row per slice with the
-image under every setting next to the label.
+`baselines/sweep.py` scores the methods on 8 settings, arcs from 0 deg: 45, 90
+and 270 deg every row; 360 deg every 2nd, 4th, 8th and 10th row; and the
+baselines' 45 deg every 10th row. 10 evenly spaced test slices per setting,
+the same ids everywhere; no RLS is built for the sweep's own folders.
+
+* **FBP** is computed by the sweep itself.
+* **SWORD** never sees which views are measured, so the pair trained once is
+  sampled per setting by the sweep (`sbatch baselines/sweep.sh`, ~1 h). The
+  reference setting reuses the full run's slices when present.
+* **DOLCE and FBPConvNet** learn the streaks of the measured views, so they are
+  trained per setting with `METHOD=dolce sbatch baselines/train_sweep.sh`
+  (likewise `METHOD=fbpconvnet`): one job, settings one after another,
+  resubmitting itself across the 24 h wall clock. DOLCE stops on its own when
+  the mean training loss of the last 3 h improved on the 3 h before by less
+  than 5% (`--plateau_hours`, `--plateau_tol`, `--min_hours 6`, cap
+  `DOLCE_HOURS=22`); FBPConvNet stops after 15 epochs without a validation
+  improvement (`--patience`). Then `sbatch baselines/sweep.sh --methods
+  fbp,sword,dolce,fbpconvnet --no_sample` adds them to the table.
+
+Results go to `output/baselines/sword_sweep/`: SWORD's per-setting
+`<setting>/sword/{recon,sino}/`, and in `sweep/` the table (`summary.md`,
+`summary.csv`, `per_slice.csv`: body, HU and legacy image metrics for every
+method, SSIM of the completed sinogram for SWORD) and `figures/strip_<slice>.png`,
+one row per method with the image under every setting next to the label.
+DOLCE's and FBPConvNet's per-setting results stay in `output/baselines/<setting>/`.
 
 ## Adding SD-Flow to the table
 

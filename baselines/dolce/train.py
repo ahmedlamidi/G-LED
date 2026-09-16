@@ -21,9 +21,9 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from ..common.config import add_common_args, method_dir, setting_dir
+from ..common.config import add_common_args, cond_indices, method_dir, setting_dir
 from ..common.data import Normalizer, SplitData, load_stats
-from ..common.runtime import (EMA, Logger, TrainClock, autocast, load_checkpoint, parse_ints,
+from ..common.runtime import (EMA, Logger, TrainClock, TrainRecord, autocast, load_checkpoint, parse_ints,
                               pick_device, save_checkpoint, seed_everything)
 from .model import alphas_cumprod, build_model, condition
 
@@ -57,6 +57,11 @@ def main():
     parser.add_argument('--hours', type=float, default=22, help='total training time over all segments')
     parser.add_argument('--segment_hours', type=float, default=22.5, help='training time per SLURM job')
     parser.add_argument('--max_iters', type=int, default=0, help='stop after this many iterations (0 = no limit)')
+    parser.add_argument('--plateau_hours', type=float, default=3,
+                        help='stop when the mean loss of the last N hours improved on the N hours before by '
+                             'less than --plateau_tol (0 = never)')
+    parser.add_argument('--plateau_tol', type=float, default=0.05)
+    parser.add_argument('--min_hours', type=float, default=6, help='no plateau stop before this')
     parser.add_argument('--ckpt_minutes', type=float, default=30)
     parser.add_argument('--log_every', type=int, default=100)
     parser.add_argument('--workers', type=int, default=4)
@@ -85,12 +90,12 @@ def main():
     model = build_model(cfg).to(device)
     ema = EMA(model, args.ema)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
-    it, hours_before = 0, 0.0
+    it, hours_before, history = 0, 0.0, []     # history: (hours, mean loss) per log line, over all segments
     if ckpt is not None:
         model.load_state_dict(ckpt['model'])
         ema.load_state_dict(ckpt['ema'])
         opt.load_state_dict(ckpt['opt'])
-        it, hours_before = ckpt['iter'], ckpt['hours']
+        it, hours_before, history = ckpt['iter'], ckpt['hours'], ckpt.get('history', [])
         log(f'resumed at iteration {it} ({hours_before:.2f} h)')
 
     acp = torch.tensor(alphas_cumprod(cfg['T']), dtype=torch.float32, device=device)
@@ -99,12 +104,48 @@ def main():
                         pin_memory=True, drop_last=len(data) > args.batch_size,
                         persistent_workers=args.workers > 0)
     clock = TrainClock(args.hours, args.segment_hours, hours_before)
-    log(f'train {len(data)} slices, {sum(p.numel() for p in model.parameters()) / 1e6:.1f}M parameters, cfg {cfg}')
+    n_params = sum(p.numel() for p in model.parameters())
+    log(f'train {len(data)} slices, {n_params / 1e6:.1f}M parameters, cfg {cfg}')
+    cond = cond_indices(args.angle_start, args.angle_end, args.angle_stride)
+    record = TrainRecord(out, {
+        'method': 'dolce',
+        'setting': {'angle_start': args.angle_start, 'angle_end': args.angle_end, 'angle_stride': args.angle_stride,
+                    'n_views': len(cond), 'rows': f'{cond[0]}..{cond[-1]} step {args.angle_stride}'},
+        'data': {'train_slices': len(data), 'setting_dir': sd, 'label_norm': [norm.lo, norm.hi]},
+        'model': {'parameters': n_params, 'cfg': {k: list(v) if isinstance(v, tuple) else v for k, v in cfg.items()},
+                  'checkpoint_used': 'last.pt, EMA weights'},
+        'optimizer': {'name': 'Adam', 'lr': args.lr, 'batch_size': args.batch_size, 'ema': args.ema,
+                      'grad_clip': 1.0, 'p_uncond': args.p_uncond},
+        'loss': {'name': 'eps-prediction MSE (DDPM)',
+                 'formula': 'mean over batch and pixels of (eps_theta(x_t, t, c) - eps)^2, x_t = sqrt(a_t) x0 + '
+                            'sqrt(1 - a_t) eps, t uniform in [0, T), linear beta schedule; the condition c (RLS '
+                            'image of the measured views) is zeroed with probability p_uncond',
+                 'logged_every_iterations': args.log_every},
+        'stopping': {'hours_cap': args.hours, 'max_iters': args.max_iters or None,
+                     'plateau': {'window_hours': args.plateau_hours, 'tolerance': args.plateau_tol,
+                                 'min_hours': args.min_hours} if args.plateau_hours else None},
+        'seed': args.seed}, columns=['iteration', 'hours', 'loss'])
 
     def save():
         save_checkpoint(last_path, {'model': model.state_dict(), 'ema': ema.state_dict(),
                                     'opt': opt.state_dict(), 'iter': it, 'hours': clock.total(),
-                                    'cfg': cfg, 'label_norm': (norm.lo, norm.hi)})
+                                    'cfg': cfg, 'label_norm': (norm.lo, norm.hi), 'history': history})
+
+    def plateaued():
+        """Mean loss over the last plateau_hours vs the plateau_hours before that."""
+        w, t = args.plateau_hours, clock.total()
+        if not w or t < max(args.min_hours, 2 * w):
+            return False
+        last = [l for h, l in history if t - w <= h]
+        prev = [l for h, l in history if t - 2 * w <= h < t - w]
+        if not last or not prev:
+            return False
+        gain = 1 - np.mean(last) / np.mean(prev)
+        if gain < args.plateau_tol:
+            log(f'plateau: mean loss {np.mean(prev):.5f} -> {np.mean(last):.5f} over the last '
+                f'{2 * w:g} h ({100 * gain:+.1f}%, below {100 * args.plateau_tol:g}%)')
+            return True
+        return False
 
     last_save, losses = time.time(), []
     while True:
@@ -126,19 +167,29 @@ def main():
             ema.update(model)
             it += 1
             losses.append(loss.item())
+            plateau = False
             if it % args.log_every == 0:
+                history.append((clock.total(), float(np.mean(losses))))
+                record.loss(iteration=it, hours=clock.total(), loss=float(np.mean(losses)))
                 log(f'iter {it}: loss {np.mean(losses):.5f} ({clock.total():.2f} h)')
                 losses = []
+                plateau = plateaued()
 
-            finished = clock.run_over() or (args.max_iters and it >= args.max_iters)
+            finished = clock.run_over() or plateau or (args.max_iters and it >= args.max_iters)
             if finished or clock.segment_over() or time.time() - last_save > args.ckpt_minutes * 60:
                 save()
                 last_save = time.time()
+                record.update(clock.segment(), iterations=it, epochs=round(it * args.batch_size / len(data), 2),
+                              last_loss=history[-1][1] if history else None)
             if finished:
                 open(done, 'w').close()
-                log(f'dolce: training finished at iteration {it}')
+                reason = 'plateau' if plateau else 'max_iters' if args.max_iters and it >= args.max_iters else 'hours_cap'
+                record.finish(reason, clock.segment(), iterations=it, epochs=round(it * args.batch_size / len(data), 2),
+                              last_loss=history[-1][1] if history else None)
+                log(f'dolce: training finished at iteration {it} ({reason})')
                 return
             if clock.segment_over():
+                record.update(clock.segment())
                 log(f'dolce: segment over at iteration {it}; the next job resumes')
                 return
 

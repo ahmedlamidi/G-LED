@@ -5,6 +5,7 @@ the `epoch N: train MSE .., val MSE ..` lines of fbpconvnet/train.py; anything
 else in the file (tracebacks, SLURM output) is ignored, so a slurm-*.out works
 as well as log.txt. Log-scale loss against iterations, with a smoothed curve.
 
+    python -m baselines.plot_training output/baselines/limited0-45_stride10/dolce/loss.csv
     python -m baselines.plot_training output/baselines/limited0-45_stride10/dolce/log.txt
     python -m baselines.plot_training output/baselines/limited0-45_stride10/sword/log_full.txt \
         output/baselines/limited0-45_stride10/sword/log_high.txt --out sword_training.png
@@ -25,6 +26,12 @@ EPOCH = re.compile(r'epoch (\d+): train MSE ([\d.eE+-]+), val MSE ([\d.eE+-]+).*
 
 def parse(path):
     """(x label, iterations/epochs, hours, {curve name: values})."""
+    if path.endswith('.csv'):      # loss.csv written by the trainers' TrainRecord
+        rows = np.genfromtxt(path, delimiter=',', names=True)
+        rows = np.atleast_1d(rows)
+        x_name = rows.dtype.names[0]
+        curves = {n.replace('_', ' '): rows[n] for n in rows.dtype.names[2:]}
+        return x_name, rows[x_name], rows['hours'], curves
     with open(path, errors='replace') as f:
         text = f.read()
     it = [(int(i), float(l), float(h)) for i, l, h in ITER.findall(text)]

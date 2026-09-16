@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from ..common.config import add_common_args, method_dir, setting_dir
 from ..common.data import SplitData
-from ..common.runtime import (EMA, Logger, TrainClock, autocast, load_checkpoint, parse_ints,
+from ..common.runtime import (EMA, Logger, TrainClock, TrainRecord, autocast, load_checkpoint, parse_ints,
                               pick_device, save_checkpoint, seed_everything)
 from .core import build_model, to_bands
 
@@ -110,8 +110,24 @@ def main():
                         pin_memory=True, drop_last=len(data) > args.batch_size,
                         persistent_workers=args.workers > 0)
     clock = TrainClock(args.hours, args.segment_hours, hours_before)
-    log(f'sword {args.band}: train {len(data)} slices, '
-        f'{sum(p.numel() for p in model.parameters()) / 1e6:.1f}M parameters, cfg {cfg}')
+    n_params = sum(p.numel() for p in model.parameters())
+    log(f'sword {args.band}: train {len(data)} slices, {n_params / 1e6:.1f}M parameters, cfg {cfg}')
+    record = TrainRecord(out, {
+        'method': f'sword_{args.band}',
+        'setting': 'none: the score models are trained on full sinograms and never see the measured views',
+        'data': {'train_slices': len(data), 'setting_dir': setting_dir(args)},
+        'model': {'parameters': n_params, 'cfg': {k: list(v) if isinstance(v, tuple) else v for k, v in cfg.items()},
+                  'checkpoint_used': f'{args.band}_last.pt, EMA weights'},
+        'optimizer': {'name': 'Adam', 'lr': args.lr, 'warmup_iters': args.warmup, 'batch_size': args.batch_size,
+                      'ema': args.ema, 'grad_clip': args.grad_clip},
+        'loss': {'name': 'denoising score matching, VE SDE (SWORD / NCSN++)',
+                 'formula': 'mean over batch of sum over pixels of (sigma * s_theta(w + sigma z, sigma) + z)^2, '
+                            'w = wavelet bands of the sinogram, z ~ N(0, I), log sigma uniform in '
+                            '[log sigma_min, log sigma_max]',
+                 'logged_every_iterations': args.log_every},
+        'stopping': {'hours_cap': args.hours, 'max_iters': args.max_iters or None},
+        'seed': args.seed}, columns=['iteration', 'hours', 'loss'])
+    last_loss = None
     log_ratio = math.log(cfg['sigma_max'] / cfg['sigma_min'])
 
     def save():
@@ -140,18 +156,26 @@ def main():
             it += 1
             losses.append(loss.item())
             if it % args.log_every == 0:
-                log(f'iter {it}: loss {np.mean(losses):.1f} ({clock.total():.2f} h)')
+                last_loss = float(np.mean(losses))
+                record.loss(iteration=it, hours=clock.total(), loss=last_loss)
+                log(f'iter {it}: loss {last_loss:.1f} ({clock.total():.2f} h)')
                 losses = []
 
             finished = clock.run_over() or (args.max_iters and it >= args.max_iters)
             if finished or clock.segment_over() or time.time() - last_save > args.ckpt_minutes * 60:
                 save()
                 last_save = time.time()
+                record.update(clock.segment(), iterations=it, epochs=round(it * args.batch_size / len(data), 2),
+                              last_loss=last_loss)
             if finished:
                 open(done, 'w').close()
-                log(f'sword {args.band}: training finished at iteration {it}')
+                reason = 'max_iters' if args.max_iters and it >= args.max_iters else 'hours_cap'
+                record.finish(reason, clock.segment(), iterations=it, epochs=round(it * args.batch_size / len(data), 2),
+                              last_loss=last_loss)
+                log(f'sword {args.band}: training finished at iteration {it} ({reason})')
                 return
             if clock.segment_over():
+                record.update(clock.segment())
                 log(f'sword {args.band}: segment over at iteration {it}; the next job resumes')
                 return
 

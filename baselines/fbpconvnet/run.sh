@@ -17,4 +17,6 @@
 
 [ -f baselines/cluster/env.sh ] || { echo "Submit from the repo root: sbatch baselines/fbpconvnet/run.sh"; exit 1; }
 source baselines/cluster/env.sh
-run baselines.fbpconvnet.train --hours "${TRAIN_HOURS:-12}" "$@" && run baselines.fbpconvnet.test
+# The setting arguments (--angle_*, --cache_root, --out_root) must reach the
+# test step too; training-only options go in TRAIN_ARGS.
+run baselines.fbpconvnet.train --hours "${TRAIN_HOURS:-12}" ${TRAIN_ARGS:-} "$@" && run baselines.fbpconvnet.test "$@"

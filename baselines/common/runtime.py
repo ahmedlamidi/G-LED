@@ -116,3 +116,61 @@ def evenly_spaced(n_total, n_pick):
     if n_total == 0 or n_pick <= 0:
         return []
     return sorted(set(np.linspace(0, n_total - 1, min(n_pick, n_total)).round().astype(int).tolist()))
+
+
+class TrainRecord:
+    """Everything about a training run, kept up to date in the method's folder:
+
+    train_info.json   setting, data sizes, model, optimizer, loss function,
+                      stopping rule, one entry per SLURM job segment (job id,
+                      start, end, hours), totals, stop reason
+    loss.csv          one row per logged loss (iteration or epoch, hours, ...)
+
+    A resumed run reads its existing record and adds a segment.
+    """
+
+    def __init__(self, out, info, columns):
+        import json
+        self.json_path = os.path.join(out, 'train_info.json')
+        self.csv_path = os.path.join(out, 'loss.csv')
+        self.columns = columns
+        self.info = {}
+        if os.path.exists(self.json_path):
+            with open(self.json_path) as f:
+                self.info = json.load(f)
+        self.info.update(info)
+        self.info.setdefault('started', time.strftime('%Y-%m-%d %H:%M:%S'))
+        self.info.setdefault('segments', []).append(
+            {'job': os.environ.get('SLURM_JOB_ID'), 'node': os.environ.get('SLURMD_NODENAME'),
+             'start': time.strftime('%Y-%m-%d %H:%M:%S'), 'end': None, 'hours': 0.0})
+        self.info.pop('finished', None)
+        self.info['stop_reason'] = 'running'
+        if not os.path.exists(self.csv_path):
+            with open(self.csv_path, 'w') as f:
+                f.write(','.join(columns) + '\n')
+        self.write()
+
+    def write(self):
+        import json
+        tmp = self.json_path + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(self.info, f, indent=1)
+        os.replace(tmp, self.json_path)
+
+    def loss(self, **row):
+        with open(self.csv_path, 'a') as f:
+            f.write(','.join(f'{row[c]:.6g}' if isinstance(row[c], float) else str(row[c]) for c in self.columns) + '\n')
+
+    def update(self, segment_hours, **fields):
+        """Progress: called at every checkpoint and at the end."""
+        self.info.update(fields)
+        self.info['segments'][-1]['hours'] = round(segment_hours, 4)
+        self.info['segments'][-1]['end'] = time.strftime('%Y-%m-%d %H:%M:%S')
+        self.info['total_hours'] = round(sum(s['hours'] for s in self.info['segments']), 4)
+        self.write()
+
+    def finish(self, reason, segment_hours, **fields):
+        self.update(segment_hours, **fields)
+        self.info['stop_reason'] = reason
+        self.info['finished'] = time.strftime('%Y-%m-%d %H:%M:%S')
+        self.write()

@@ -1,25 +1,31 @@
-"""SWORD over a sweep of view settings, on the same test slices.
+"""The baselines over a sweep of view settings, on the same test slices.
 
-SWORD's two score models never see which views are measured, so the pair
-trained once (--sword_dir) serves every setting; only sampling is repeated.
 Settings, all arcs starting at 0 deg:
 
     full resolution   45, 90, 270 deg every row
     full arc          360 deg every 2nd, 4th, 8th, 10th row
     reference         45 deg every 10th row (the baselines' setting)
 
-For each setting a small cache folder is built from --base_setting: K, the
-picked test slices' labels, and the FBP of the measured views exactly as the
-FBP baseline computes it (no RLS is built, so evaluate.py's figures do not
-work on these folders). The checkpoints are linked in, sword/sample.py runs,
-and FBP and SWORD are both scored on every slice: SSIM / PSNR inside the body
-and over the image in HU, the legacy compare_ssim.py numbers, and for SWORD
-the SSIM of the completed sinogram (full and unmeasured rows). The table and
-one strip per slice (FBP row, SWORD row, every setting, label) go to
-<out_root>/sweep/. Re-running skips slices already sampled.
+Methods:
+  fbp         FBP of the measured views, computed here (the FBP baseline).
+  sword       SWORD's two score models never see which views are measured, so
+              the pair trained once (--sword_dir) serves every setting; this
+              script links the checkpoints into a small per-setting folder and
+              runs sword/sample.py on the picked slices.
+  dolce, fbpconvnet
+              trained per setting by baselines/train_sweep.sh (they learn the
+              streaks of the measured views); their reconstructions are read
+              from <base_out>/<setting>/<method>/recon/.
 
-    python -m baselines.sword.sweep
-    python -m baselines.sword.sweep --no_sample      # only rescore and redraw
+Every method is scored on every picked slice: SSIM / PSNR inside the body and
+over the image in HU, the legacy compare_ssim.py numbers, and for methods that
+complete a sinogram (SWORD) its SSIM on all and on the unmeasured rows. The
+table and one strip per slice (one row per method, every setting, the label)
+go to <out_root>/sweep/. Re-running skips slices already sampled.
+
+    python -m baselines.sweep                          # fbp and sword
+    python -m baselines.sweep --methods fbp,sword,dolce,fbpconvnet
+    python -m baselines.sweep --no_sample               # only rescore and redraw
 """
 import argparse
 import csv
@@ -35,12 +41,12 @@ import numpy as np
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 
-from ..common.config import DEFAULT_CACHE_ROOT, DEFAULT_OUT_ROOT, cond_indices, setting_tag  # noqa: E402
-from ..common.ct import sparse_fbp  # noqa: E402
-from ..common.data import SplitData, load_offset  # noqa: E402
-from ..common.metrics import METRICS, ct_scores, sino_scores, to_hu, water_level  # noqa: E402
-from ..common.runtime import Logger, evenly_spaced  # noqa: E402
-from ..evaluate import WINDOWS, body_box  # noqa: E402
+from .common.config import DEFAULT_CACHE_ROOT, DEFAULT_OUT_ROOT, cond_indices, setting_tag  # noqa: E402
+from .common.ct import sparse_fbp  # noqa: E402
+from .common.data import SplitData, load_offset  # noqa: E402
+from .common.metrics import METRICS, ct_scores, sino_scores, to_hu, water_level  # noqa: E402
+from .common.runtime import Logger, evenly_spaced  # noqa: E402
+from .evaluate import WINDOWS, body_box  # noqa: E402
 
 # (angle_start, angle_end, angle_stride)
 SETTINGS = [(0, 45, 1), (0, 90, 1), (0, 270, 1),
@@ -48,7 +54,7 @@ SETTINGS = [(0, 45, 1), (0, 90, 1), (0, 270, 1),
             (0, 45, 10)]
 SINO_METRICS = [('ssim_sino', 'SSIM sinogram'), ('ssim_sino_unknown', 'SSIM unmeasured rows')]
 CKPT_FILES = ('full_last.pt', 'high_last.pt', 'full_train_done', 'high_train_done')
-METHODS = [('fbp', 'FBP'), ('sword', 'SWORD')]
+NAMES = {'fbp': 'FBP', 'sword': 'SWORD', 'dolce': 'DOLCE', 'fbpconvnet': 'FBP-ConvNet'}
 
 
 class Setting:
@@ -124,8 +130,8 @@ def reuse_reference(ref_dir, out_dir, ids):
     return n
 
 
-def strip(sid, i, settings, results, images, data, offset, out_root, window, out_dir):
-    """Two rows, FBP and SWORD: the image under every setting, then the label, in one HU window."""
+def strip(sid, i, settings, methods, results, images, data, offset, window, out_dir):
+    """One row per method: the image under every setting, then the label, in one HU window."""
     label = data.image('label', i)
     water = water_level(label + offset)
     hu_label = to_hu(label + offset, water)
@@ -133,16 +139,17 @@ def strip(sid, i, settings, results, images, data, offset, out_root, window, out
     level, width = WINDOWS[window]
     crop_h, crop_w = hu_label[box].shape
     ncol = len(settings) + 1
-    fig, axes = plt.subplots(len(METHODS), ncol, figsize=(2.6 * ncol, 2.6 * crop_h / crop_w * len(METHODS) + 0.9),
+    fig, axes = plt.subplots(len(methods), ncol, figsize=(2.6 * ncol, 2.6 * crop_h / crop_w * len(methods) + 0.9),
                              squeeze=False)
-    for r, (key, name) in enumerate(METHODS):
+    for r, key in enumerate(methods):
+        name = NAMES[key]
         for c, s in enumerate(settings):
             ax = axes[r, c]
             ax.set_xticks([])
             ax.set_yticks([])
             img = images(s, key, sid)
             if img is None:
-                ax.set_title(f'{s.label}\nnot sampled', fontsize=9, color='0.5')
+                ax.set_title(f'{s.label}\nnot done', fontsize=9, color='0.5')
                 ax.set_facecolor('0.9')
                 continue
             ax.imshow(to_hu(img + offset, water)[box], cmap='gray', vmin=level - width / 2, vmax=level + width / 2)
@@ -167,12 +174,17 @@ def main():
     parser.add_argument('--sword_dir', default=None, help='default: <base_out>/<base_setting>/sword')
     parser.add_argument('--cache_root', default=os.path.join(DEFAULT_CACHE_ROOT, 'sword_sweep'))
     parser.add_argument('--out_root', default=os.path.join(DEFAULT_OUT_ROOT, 'sword_sweep'))
+    parser.add_argument('--methods', default='fbp,sword', help=f'comma-separated, from {", ".join(NAMES)}')
     parser.add_argument('--n_slices', type=int, default=10, help='evenly spaced test slices')
     parser.add_argument('--window', default='lung', choices=list(WINDOWS))
     parser.add_argument('--no_sample', action='store_true', help='only score and draw what is already sampled')
     parser.add_argument('--sample_args', default='', help='extra arguments for sword/sample.py, quoted')
     parser.add_argument('--device', default='cuda:0')
     args = parser.parse_args()
+    methods = [m for m in args.methods.split(',') if m]
+    unknown = [m for m in methods if m not in NAMES]
+    if unknown:
+        raise SystemExit(f'unknown method(s) {unknown}; choose from {list(NAMES)}')
 
     sword_dir = args.sword_dir or os.path.join(args.base_out, args.base_setting, 'sword')
     report_dir = os.path.join(args.out_root, 'sweep')
@@ -186,38 +198,50 @@ def main():
     ids = [base.slices[i]['id'] for i in picks]
     offset = load_offset(base_sd)
     settings = [Setting(*s) for s in SETTINGS]
-    log(f'sweep: {len(settings)} settings x {len(ids)} slices ({ids[0]} .. {ids[-1]}), checkpoints {sword_dir}')
+    log(f'sweep: {", ".join(methods)}; {len(settings)} settings x {len(ids)} slices ({ids[0]} .. {ids[-1]})')
+
+    def recon_path(s, key, sid):
+        """Where a method's reconstruction of a slice lives for a setting."""
+        root = args.out_root if key == 'sword' else args.base_out
+        return os.path.join(root, s.tag, key, 'recon', sid + '.npy')
 
     results = {}
     caches = {}
     for s in settings:
         sd = build_cache(s, base, picks, offset, args.cache_root, log)
         caches[s.tag] = sd
-        out_dir = os.path.join(args.out_root, s.tag, 'sword')
-        link_checkpoints(sword_dir, out_dir)
-        if s.tag == args.base_setting:
-            n = reuse_reference(os.path.join(args.base_out, args.base_setting, 'sword'), out_dir, ids)
-            if n:
-                log(f'{s.label}: reused {n} slices from {args.base_out}')
-        if not args.no_sample:
-            cmd = [sys.executable, '-m', 'baselines.sword.sample', '--angle_start', str(s.start),
-                   '--angle_end', str(s.end), '--angle_stride', str(s.stride), '--cache_root', args.cache_root,
-                   '--out_root', args.out_root, '--device', args.device] + args.sample_args.split()
-            log(f'{s.label}: {" ".join(cmd[2:])}')
-            subprocess.run(cmd, check=True)
+        if 'sword' in methods:
+            out_dir = os.path.join(args.out_root, s.tag, 'sword')
+            link_checkpoints(sword_dir, out_dir)
+            if s.tag == args.base_setting:
+                n = reuse_reference(os.path.join(args.base_out, args.base_setting, 'sword'), out_dir, ids)
+                if n:
+                    log(f'{s.label}: reused {n} SWORD slices from {args.base_out}')
+            if not args.no_sample:
+                cmd = [sys.executable, '-m', 'baselines.sword.sample', '--angle_start', str(s.start),
+                       '--angle_end', str(s.end), '--angle_stride', str(s.stride), '--cache_root', args.cache_root,
+                       '--out_root', args.out_root, '--device', args.device] + args.sample_args.split()
+                log(f'{s.label}: {" ".join(cmd[2:])}')
+                subprocess.run(cmd, check=True)
         data = SplitData(sd, 'test')
-        results[s.tag] = {'fbp': {}, 'sword': {}}
+        results[s.tag] = {key: {} for key in methods}
         for i in range(len(data)):
             sid = data.slices[i]['id']
             label = data.image('label', i)
             water = water_level(label + offset)
-            results[s.tag]['fbp'][sid] = ct_scores(data.image('fbp', i), label, offset, water)
-            recon = os.path.join(out_dir, 'recon', sid + '.npy')
-            if os.path.exists(recon):
+            for key in methods:
+                if key == 'fbp':
+                    results[s.tag][key][sid] = ct_scores(data.image('fbp', i), label, offset, water)
+                    continue
+                recon = recon_path(s, key, sid)
+                if not os.path.exists(recon):
+                    continue
                 m = ct_scores(np.load(recon), label, offset, water)
-                m.update(sino_scores(np.load(os.path.join(out_dir, 'sino', sid + '.npy')), data.sinogram(i), s.cond))
-                results[s.tag]['sword'][sid] = m
-        log(f'{s.label}: scored FBP on {len(results[s.tag]["fbp"])} and SWORD on {len(results[s.tag]["sword"])} slices')
+                sino = os.path.join(os.path.dirname(os.path.dirname(recon)), 'sino', sid + '.npy')
+                if os.path.exists(sino):
+                    m.update(sino_scores(np.load(sino), data.sinogram(i), s.cond))
+                results[s.tag][key][sid] = m
+        log(f'{s.label}: scored ' + ', '.join(f'{NAMES[k]} on {len(results[s.tag][k])}' for k in methods) + ' slices')
 
     keys = [k for k, _ in METRICS + SINO_METRICS]
     titles = [t for _, t in METRICS + SINO_METRICS]
@@ -225,7 +249,8 @@ def main():
         w = csv.writer(f)
         w.writerow(['setting', 'sweep', 'arc_deg', 'stride', 'n_views', 'method', 'slice_id'] + keys)
         for s in settings:
-            for key, name in METHODS:
+            for key in methods:
+                name = NAMES[key]
                 for sid in ids:
                     m = results[s.tag][key].get(sid)
                     if m:
@@ -237,7 +262,7 @@ def main():
             return '-'
         return f'{np.nanmean(v):.3f} ± {np.nanstd(v):.3f}' if k.startswith('ssim') else f'{np.nanmean(v):.2f} ± {np.nanstd(v):.2f}'
 
-    lines = [f'FBP and SWORD over view settings, {len(ids)} evenly spaced test slices of '
+    lines = [f'{", ".join(NAMES[k] for k in methods)} over view settings, {len(ids)} evenly spaced test slices of '
              f'{args.base_setting}\'s test patient',
              '', '| Setting | views | Method | ' + ' | '.join(titles) + ' |', '|---' * (len(titles) + 3) + '|']
     with open(os.path.join(report_dir, 'summary.csv'), 'w', newline='') as f:
@@ -245,7 +270,8 @@ def main():
         w.writerow(['setting', 'sweep', 'arc_deg', 'stride', 'n_views', 'method', 'n_slices']
                    + [f'{k}_{st}' for k in keys for st in ('mean', 'std')])
         for s in settings:
-            for key, name in METHODS:
+            for key in methods:
+                name = NAMES[key]
                 r = results[s.tag][key]
                 if not r:
                     lines.append(f'| {s.label} | {len(s.cond)} | {name} | ' + ' | '.join('-' for _ in keys) + ' |')
@@ -257,8 +283,9 @@ def main():
                 lines.append(f'| {s.label} | {len(s.cond)} | {name} | ' + ' | '.join(cell(k, cols[k]) for k in keys) + ' |')
     lines += ['', 'Setting = arc from 0 deg / row stride (one row = 0.5 deg). FBP = FBP of the measured views '
               '(the FBP baseline). body: inside the patient, HU: whole image, both in HU from the label; legacy: '
-              'validation/compare_ssim.py; sinogram: SSIM of SWORD\'s completed sinogram against the true one, '
-              'normalized by its min/max, over all rows and over the unmeasured rows only (FBP completes no sinogram).']
+              'validation/compare_ssim.py; sinogram: SSIM of a completed sinogram against the true one, normalized '
+              'by its min/max, over all rows and over the unmeasured rows only (only methods that complete a '
+              'sinogram, i.e. SWORD).']
     with open(os.path.join(report_dir, 'summary.md'), 'w') as f:
         f.write('\n'.join(lines) + '\n')
     print('\n'.join(lines))
@@ -267,11 +294,11 @@ def main():
         if key == 'fbp':
             d = SplitData(caches[s.tag], 'test')
             return d.image('fbp', d.ids.index(sid))
-        path = os.path.join(args.out_root, s.tag, 'sword', 'recon', sid + '.npy')
+        path = recon_path(s, key, sid)
         return np.load(path) if os.path.exists(path) else None
 
     for i, sid in zip(picks, ids):
-        strip(sid, i, settings, results, images, base, offset, args.out_root, args.window, fig_dir)
+        strip(sid, i, settings, methods, results, images, base, offset, args.window, fig_dir)
     log(f'sweep: report in {report_dir}')
 
 
