@@ -94,6 +94,30 @@ def load_model_specs(configs, models, num_sample_steps):
     return specs
 
 
+def draw(curves, args, n_slices):
+    """The plot from whatever has been scored so far (called after every start angle)."""
+    fig, axes = plt.subplots(3, 1, figsize=(10, 9), sharex=True)
+    for name, (rows_out, known) in curves.items():
+        if not rows_out:
+            continue
+        best = max(rows_out, key=lambda r: r['ssim_body'])
+        x = [r['start_deg'] for r in rows_out]
+        for ax, key in zip(axes, ('ssim_body', 'ssim_legacy', 'ssim_sino')):
+            line, = ax.plot(x, [r[key] for r in rows_out], '-o', ms=3, label=f'{name} (peak {best["start_deg"]:g}°)')
+            ax.axvline(best['start_deg'], color=line.get_color(), ls='--', lw=0.8)
+            if known:
+                ax.axvline(known[0], color=line.get_color(), ls=':', lw=1.2)
+    for ax, title in zip(axes, ('SSIM inside the body (HU)', 'legacy SSIM (compare_ssim.py)', 'SSIM of the completed sinogram')):
+        ax.set_ylabel(title, fontsize=9)
+        ax.grid(alpha=0.3)
+    axes[-1].set_xlabel('start of the conditioning window (deg); dashed = best start, dotted = args.txt')
+    axes[-1].set_xticks(np.arange(0, 361, 30))
+    axes[0].legend(fontsize=8)
+    fig.suptitle(f'SD-Flow: score vs start angle of the conditioning window ({args.split} split, {n_slices} slices)')
+    fig.tight_layout()
+    fig.savefig(os.path.join(args.out, 'start_sweep.png'), dpi=130)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_common_args(parser)   # --angle_* only pick the baselines' cache folder for slices and labels
@@ -135,13 +159,25 @@ def main():
         known = trained_window(cfg['bfs_dynamic_folder'])
         log(f'{name}: arc {arc:g} deg, stride {stride}, {cfg["num_sample_steps"]} steps, checkpoint {ckpt}; '
             f'config says start {cfg["angle_start"]:g}; args.txt says {known}')
-        trainer = build_trainer(modules, cfg, device)
-        trainer.load(path=ckpt)
+        csv_path = os.path.join(args.out, f'{name}.csv')
+        fields = ['model', 'start_deg', 'arc_deg', 'stride', 'n_views', 'ssim_body', 'ssim_legacy', 'ssim_sino']
+        rows_out = []
+        if os.path.exists(csv_path):     # resume: keep starts already scored with the same arc and stride
+            with open(csv_path) as f:
+                rows_out = [{k: (v if k == 'model' else float(v)) for k, v in r.items()} for r in csv.DictReader(f)
+                            if float(r['arc_deg']) == arc and int(float(r['stride'])) == stride]
+            if rows_out:
+                log(f'{name}: {len(rows_out)} start angles already in {csv_path}, continuing')
+        done_starts = {r['start_deg'] for r in rows_out}
+        curves[name] = (rows_out, known)
+        todo = [float(st) for st in starts if float(st) not in done_starts]
+        trainer = build_trainer(modules, cfg, device) if todo else None
+        if trainer is not None:
+            trainer.load(path=ckpt)
         torch.manual_seed(args.seed)
 
-        rows_out = []
         with torch.no_grad():
-            for start in starts:
+            for start in todo:
                 cond = window_rows(float(start), arc, stride)
                 per = {'ssim_body': [], 'ssim_legacy': [], 'ssim_sino': []}
                 for i in picks:
@@ -162,37 +198,22 @@ def main():
                 row = {'model': name, 'start_deg': float(start), 'arc_deg': arc, 'stride': stride, 'n_views': len(cond)}
                 row.update({k: float(np.mean(v)) for k, v in per.items()})
                 rows_out.append(row)
+                rows_out.sort(key=lambda r: r['start_deg'])
+                with open(csv_path, 'w', newline='') as f:       # the CSV and the plot are always current
+                    w = csv.DictWriter(f, fieldnames=fields)
+                    w.writeheader()
+                    w.writerows(rows_out)
+                draw(curves, args, len(picks))
                 log(f'{name}: start {start:6.1f} deg -> body SSIM {row["ssim_body"]:.3f}, legacy {row["ssim_legacy"]:.3f}, '
-                    f'sino {row["ssim_sino"]:.3f}')
+                    f'sino {row["ssim_sino"]:.3f}  ({len(rows_out)}/{len(starts)} starts)')
         best = max(rows_out, key=lambda r: r['ssim_body'])
         log(f'{name}: best start {best["start_deg"]:g} deg (body SSIM {best["ssim_body"]:.3f}); '
             f'window {best["start_deg"]:g}-{best["start_deg"] + arc:g} deg every {stride}th row'
             + (f'; args.txt: {known[0]:g}-{known[1]:g} stride {known[2]}' if known else ''))
-        curves[name] = (rows_out, best, known)
-        with open(os.path.join(args.out, f'{name}.csv'), 'w', newline='') as f:
-            w = csv.DictWriter(f, fieldnames=list(rows_out[0]))
-            w.writeheader()
-            w.writerows(rows_out)
         del trainer
         torch.cuda.empty_cache()
 
-    fig, axes = plt.subplots(3, 1, figsize=(10, 9), sharex=True)
-    for name, (rows_out, best, known) in curves.items():
-        x = [r['start_deg'] for r in rows_out]
-        for ax, key in zip(axes, ('ssim_body', 'ssim_legacy', 'ssim_sino')):
-            line, = ax.plot(x, [r[key] for r in rows_out], '-o', ms=3, label=f'{name} (peak {best["start_deg"]:g}°)')
-            ax.axvline(best['start_deg'], color=line.get_color(), ls='--', lw=0.8)
-            if known:
-                ax.axvline(known[0], color=line.get_color(), ls=':', lw=1.2)
-    for ax, title in zip(axes, ('SSIM inside the body (HU)', 'legacy SSIM (compare_ssim.py)', 'SSIM of the completed sinogram')):
-        ax.set_ylabel(title, fontsize=9)
-        ax.grid(alpha=0.3)
-    axes[-1].set_xlabel('start of the conditioning window (deg); dashed = best start, dotted = args.txt')
-    axes[-1].set_xticks(np.arange(0, 361, 30))
-    axes[0].legend(fontsize=8)
-    fig.suptitle(f'SD-Flow: score vs start angle of the conditioning window ({args.split} split, {len(picks)} slices)')
-    fig.tight_layout()
-    fig.savefig(os.path.join(args.out, 'start_sweep.png'), dpi=130)
+    draw(curves, args, len(picks))
     log(f'wrote {os.path.join(args.out, "start_sweep.png")}')
 
 

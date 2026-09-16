@@ -23,4 +23,6 @@ wandb/
 # baseline results copied back from the cluster
 /baselines_snap_*
 /val_mini
-/sword_sweep
+/*_sweep
+/*_sweep/
+/sdflow_start_sweep

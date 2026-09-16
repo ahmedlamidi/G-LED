@@ -1,0 +1,25 @@
+{
+  "_comment": "SD-Flow models in best_model_folder and the conditioning window each was trained with: [start deg, start + arc deg) every `stride`-th row, rows wrapping past 360. Starts found with baselines/sdflow/start_sweep.py on 2026-09-16 (45: 285, 90: 300, 180: 270); the 270-degree family is still to be found (start null): sbatch baselines/sdflow/start_sweep.sh --model best_model_folder/Limited_270:270:1",
+  "sample_H": 720,
+  "detector_count": 816,
+  "unet_dim": 32,
+  "num_sample_steps": 20,
+  "models": [
+    {"name": "45/1",   "folder": "best_model_folder/Limited_view_45",          "arc": 45,  "stride": 1,  "start": 285},
+    {"name": "45/8",   "folder": "best_model_folder/LimitedView45Sparse8",     "arc": 45,  "stride": 8,  "start": 285},
+    {"name": "45/10",  "folder": "best_model_folder/LimitedView45Sparse10",    "arc": 45,  "stride": 10, "start": 285},
+    {"name": "90/1",   "folder": "best_model_folder/LimitedView90",            "arc": 90,  "stride": 1,  "start": 300},
+    {"name": "90/8",   "folder": "best_model_folder/Limited90_Sparse_8",       "arc": 90,  "stride": 8,  "start": 300},
+    {"name": "90/10",  "folder": "best_model_folder/Limited_90_sparse10",      "arc": 90,  "stride": 10, "start": 300},
+    {"name": "180/1",  "folder": "best_model_folder/LimitedView180",           "arc": 180, "stride": 1,  "start": 270},
+    {"name": "180/8",  "folder": "best_model_folder/Limited_180_Sparse_8",     "arc": 180, "stride": 8,  "start": 270},
+    {"name": "180/10", "folder": "best_model_folder/Limited_180_Sparse_10",    "arc": 180, "stride": 10, "start": 270},
+    {"name": "270/1",  "folder": "best_model_folder/Limited_270",              "arc": 270, "stride": 1,  "start": null},
+    {"name": "270/8",  "folder": "best_model_folder/Limited_view_270_sparse_8","arc": 270, "stride": 8,  "start": null},
+    {"name": "270/10", "folder": "best_model_folder/Limited_270_sparse_10",    "arc": 270, "stride": 10, "start": null},
+    {"name": "360/2",  "folder": "best_model_folder/Sparse2",                  "arc": 360, "stride": 2,  "start": 0},
+    {"name": "360/4",  "folder": "best_model_folder/Sparse_4",                 "arc": 360, "stride": 4,  "start": 0},
+    {"name": "360/8",  "folder": "best_model_folder/Sparse8",                  "arc": 360, "stride": 8,  "start": 0},
+    {"name": "360/10", "folder": "best_model_folder/Sparse10",                 "arc": 360, "stride": 10, "start": 0}
+  ]
+}

@@ -79,9 +79,11 @@ def find_checkpoint(folder):
 
 
 def sdflow_cond(cfg):
-    """Measured rows, same arithmetic as main_diff_eval_bfs.py."""
+    """Measured rows, same arithmetic as main_diff_eval_bfs.py; a window past
+    360 deg (angle_end > 360) wraps around the circle."""
     step = 360 / cfg['sample_H']
-    return list(range(int(cfg['angle_start'] / step), int(cfg['angle_end'] / step), cfg['angle_stride']))
+    rows = range(int(cfg['angle_start'] / step), int(cfg['angle_end'] / step), cfg['angle_stride'])
+    return [r % cfg['sample_H'] for r in rows]
 
 
 def main():
