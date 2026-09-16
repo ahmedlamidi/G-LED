@@ -61,29 +61,55 @@ def _manifest(split, index_maps, test_stride):
     return manifest
 
 
-def _write_split(out_dir, slices, cond, op, rls_beta, rls_iters, force):
+def _write_split(out_dir, slices, cond, op, rls_beta, rls_iters, force, images, label_from):
+    """Write the requested image arrays of one split. Arrays already present for
+    the same slices are kept; the label (independent of the measured views) is
+    linked from label_from's split when that holds the same slices."""
     os.makedirs(out_dir, exist_ok=True)
     done = os.path.join(out_dir, 'DONE')
     manifest_path = os.path.join(out_dir, 'slices.json')
+    same = False
     if os.path.exists(done) and not force:
         with open(manifest_path) as f:
-            if json.load(f) == slices:
-                print(f'{out_dir}: up to date, skipping')
-                return
+            same = json.load(f) == slices
+    if same:
+        images = [n for n in images if not os.path.exists(os.path.join(out_dir, n + '.npy'))]
     if os.path.exists(done):
         os.remove(done)
 
-    arrays = {name: np.lib.format.open_memmap(os.path.join(out_dir, name + '.npy'), mode='w+',
-                                              dtype=np.float32, shape=(len(slices), N_PIX, N_PIX))
-              for name in IMAGES}
-    for i, entry in enumerate(tqdm(slices, desc=os.path.basename(out_dir))):
-        sino = np.load(entry['sino']).astype(np.float32)
-        arrays['label'][i] = full_fbp(sino)
-        arrays['fbp_in'][i] = sparse_fbp(sino, cond)
-        arrays['rls'][i] = op.rls(sino[cond] + 1.0, rls_beta, iters=rls_iters)
-    for arr in arrays.values():
-        arr.flush()
-    del arrays
+    if 'label' in images and label_from and label_from != os.path.dirname(os.path.normpath(out_dir)):
+        src = os.path.join(label_from, os.path.basename(os.path.normpath(out_dir)))
+        if os.path.exists(os.path.join(src, 'DONE')) and os.path.exists(os.path.join(src, 'label.npy')):
+            with open(os.path.join(src, 'slices.json')) as f:
+                if json.load(f) == slices:
+                    dst = os.path.join(out_dir, 'label.npy')
+                    if os.path.lexists(dst):
+                        os.remove(dst)
+                    os.symlink(os.path.abspath(os.path.join(src, 'label.npy')), dst)
+                    print(f'{out_dir}: label linked from {src}')
+                    images = [n for n in images if n != 'label']
+
+    if images:
+        for name in images:      # never write through a link left from an earlier build
+            path = os.path.join(out_dir, name + '.npy')
+            if os.path.islink(path):
+                os.remove(path)
+        arrays = {name: np.lib.format.open_memmap(os.path.join(out_dir, name + '.npy'), mode='w+',
+                                                  dtype=np.float32, shape=(len(slices), N_PIX, N_PIX))
+                  for name in images}
+        for i, entry in enumerate(tqdm(slices, desc=f'{os.path.basename(out_dir)} {"+".join(images)}')):
+            sino = np.load(entry['sino']).astype(np.float32)
+            if 'label' in arrays:
+                arrays['label'][i] = full_fbp(sino)
+            if 'fbp_in' in arrays:
+                arrays['fbp_in'][i] = sparse_fbp(sino, cond)
+            if 'rls' in arrays:
+                arrays['rls'][i] = op.rls(sino[cond] + 1.0, rls_beta, iters=rls_iters)
+        for arr in arrays.values():
+            arr.flush()
+        del arrays
+    else:
+        print(f'{out_dir}: up to date, skipping')
 
     with open(manifest_path, 'w') as f:
         json.dump(slices, f, indent=1)
@@ -96,7 +122,13 @@ def _stats(sd, offset, op_norm_sq, rls_beta, cond, n_sample=256):
     rng = np.random.default_rng(0)
     idx = np.sort(rng.choice(len(train), size=min(n_sample, len(train)), replace=False))
     stats = {'cond_indices': cond, 'op_norm_sq': op_norm_sq, 'rls_beta': rls_beta}
+    stats_path = os.path.join(sd, 'stats.json')
+    if os.path.exists(stats_path):      # keep the ranges of images written earlier
+        with open(stats_path) as f:
+            stats.update({k: v for k, v in json.load(f).items() if k.endswith(('_lo', '_hi')) or k == 'z_scale'})
     for name in IMAGES:
+        if not os.path.exists(os.path.join(train.dir, name + '.npy')):
+            continue
         vals = np.asarray(train.array(name)[idx])
         stats[f'{name}_lo'] = float(np.percentile(vals, 0.1))
         stats[f'{name}_hi'] = float(np.percentile(vals, 99.9))
@@ -124,6 +156,12 @@ def main():
     parser.add_argument('--rls_iters', type=int, default=50)
     parser.add_argument('--workers', type=int, default=int(os.environ.get('SLURM_CPUS_PER_TASK', 4)),
                         help='processes computing sinograms')
+    parser.add_argument('--images', default=','.join(IMAGES),
+                        help='which arrays to write (label, fbp_in for FBPConvNet, rls for DOLCE); '
+                             'arrays already present are kept')
+    parser.add_argument('--label_from', default=None,
+                        help='setting folder whose label.npy to link instead of recomputing (the label '
+                             'does not depend on the measured views), e.g. data/baselines_cache/limited0-45_stride10')
     parser.add_argument('--force', action='store_true', help='rebuild splits that are up to date')
     args = parser.parse_args()
 
@@ -161,7 +199,8 @@ def main():
     offset = fbp_of_ones()
     np.save(os.path.join(sd, 'K.npy'), offset)
     for name in SPLITS:
-        _write_split(os.path.join(sd, name), manifest[name], cond, op, rls_beta, args.rls_iters, args.force)
+        _write_split(os.path.join(sd, name), manifest[name], cond, op, rls_beta, args.rls_iters, args.force,
+                     [n for n in args.images.split(',') if n], args.label_from)
     op_norm_sq = op.norm_sq()
     op.close()
 

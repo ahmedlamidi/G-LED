@@ -22,6 +22,11 @@
 #   METHOD=fbpconvnet sbatch baselines/train_sweep.sh     # ~1 day in total
 #   METHOD=dolce sbatch baselines/train_sweep.sh          # several days, one job at a time
 #   METHOD=dolce SETTINGS="0 45 1;0 90 1" sbatch baselines/train_sweep.sh   # a subset
+#
+# Disk: each setting needs ~2.8 GB per input array (RLS for DOLCE, FBP for
+# FBPConvNet) for the training patients, plus the shared label; the arrays are
+# removed again after sampling (CLEAN=0 keeps them). A step that fails aborts
+# the job instead of resubmitting.
 
 [ -f baselines/cluster/env.sh ] || { echo "Submit from the repo root: METHOD=dolce sbatch baselines/train_sweep.sh"; exit 1; }
 source baselines/cluster/env.sh
@@ -33,6 +38,7 @@ MAX_RESUBMITS="${MAX_RESUBMITS:-12}"
 WALL_H="${WALL_H:-168}"                    # hours this job may use; matches --time above
 
 hours_left() { echo $(( (WALL_H * 3600 - SECONDS) / 3600 )); }
+fail() { echo "train_sweep: $1; not resubmitting, fix and resubmit by hand"; exit 1; }
 resubmit() {
 	if [ "${RESUBMITS:-0}" -ge "$MAX_RESUBMITS" ]; then
 		echo "train_sweep: $MAX_RESUBMITS resubmissions reached, stopping"; exit 1
@@ -55,20 +61,36 @@ for spec in "${LIST[@]}"; do
 	# a fresh setting needs prepare (up to ~1 h) plus a useful stretch of training
 	[ "$(hours_left)" -lt 3 ] && resubmit
 
-	run baselines.prepare_data --data_root "${DATA_ROOT:-data/LIDC-IDRI}" "${ANGLES[@]}"
+	# only the input this method needs; the label is shared with the base setting
+	case "$METHOD" in
+		dolce)      IMAGES=label,rls ;;
+		fbpconvnet) IMAGES=label,fbp_in ;;
+		*) echo "unknown METHOD $METHOD"; exit 1 ;;
+	esac
+	run baselines.prepare_data --data_root "${DATA_ROOT:-data/LIDC-IDRI}" "${ANGLES[@]}" \
+		--images "$IMAGES" --label_from "data/baselines_cache/${BASE_SETTING:-limited0-45_stride10}" \
+		|| fail "prepare failed for $TAG"
 	if [ ! -f "$OUT/train_done" ]; then
 		LEFT=$(( $(hours_left) - 1 ))       # keep an hour for the checkpoint and sampling
 		case "$METHOD" in
-			dolce)      run baselines.dolce.train "${ANGLES[@]}" --hours "$DOLCE_HOURS" --segment_hours "$LEFT" ;;
+			dolce)      run baselines.dolce.train "${ANGLES[@]}" --hours "$DOLCE_HOURS" --segment_hours "$LEFT" \
+			                || fail "training failed for $TAG" ;;
 			fbpconvnet) [ "$LEFT" -lt 3 ] && resubmit
-			            run baselines.fbpconvnet.train "${ANGLES[@]}" --hours "$FBPCONV_HOURS" ;;
-			*) echo "unknown METHOD $METHOD"; exit 1 ;;
+			            run baselines.fbpconvnet.train "${ANGLES[@]}" --hours "$FBPCONV_HOURS" \
+			                || fail "training failed for $TAG" ;;
 		esac
 		[ -f "$OUT/train_done" ] || resubmit     # segment ended before the stopping rule: continue next job
 	fi
 	case "$METHOD" in
-		dolce)      run baselines.dolce.sample "${ANGLES[@]}" ;;
-		fbpconvnet) run baselines.fbpconvnet.test "${ANGLES[@]}" ;;
+		dolce)      run baselines.dolce.sample "${ANGLES[@]}" || fail "sampling failed for $TAG" ;;
+		fbpconvnet) run baselines.fbpconvnet.test "${ANGLES[@]}" || fail "test failed for $TAG" ;;
 	esac
+	if [ "${CLEAN:-1}" = "1" ]; then
+		# the method's training/validation input arrays (~2.8 GB per setting) are not needed any more;
+		# the test split and the shared label stay. prepare rebuilds them if a run is ever repeated.
+		INPUT=$([ "$METHOD" = dolce ] && echo rls || echo fbp_in)
+		rm -f "data/baselines_cache/$TAG/train/$INPUT.npy" "data/baselines_cache/$TAG/val/$INPUT.npy"
+		echo "train_sweep: removed $TAG train/val $INPUT arrays (CLEAN=0 keeps them)"
+	fi
 done
 echo "train_sweep: all settings done for $METHOD"

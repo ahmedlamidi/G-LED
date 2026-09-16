@@ -59,6 +59,10 @@ depend only on what's listed in the "After" column.
 
 Details:
 * Pass extra arguments after the script, e.g. `sbatch baselines/tv/run.sh --tune_slices 16`.
+* `prepare.sh` for a second view setting can share the label with the first
+  (`--label_from data/baselines_cache/limited0-45_stride10`) and write only the
+  arrays a method needs (`--images label,rls` for DOLCE, `label,fbp_in` for
+  FBPConvNet); arrays already present are kept. Each array is ~1 MB per slice.
 * Set the patient folder with `DATA_ROOT` (default `data/LIDC-IDRI`) and training time with
   `TRAIN_HOURS` (FBPConvNet 12, DOLCE and SWORD 22).
 * A job that stops early can simply be resubmitted: training resumes from
@@ -111,6 +115,10 @@ sbatch baselines/evaluate.sh --methods fbp,dolce,sdflow,sdflow_other
 ```
 
 SD-Flow may use other views than the baselines; `summary.md` lists them.
+Not sure which window a model was trained with? `baselines/sdflow/start_sweep.sh
+--config <its config>` slides the window's start around the circle, scores each
+start on validation slices and plots the curve; the trained window is the
+peak, and it is also recorded in `<model>/diffusion_folder/logging/args.txt`.
 Existing `main_diff_eval_bfs.py` outputs can still be imported with
 `--sdflow "NAME=<diffusion_folder>/<series>/contour"`.
 
