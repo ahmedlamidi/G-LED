@@ -12,14 +12,16 @@ The trained window is also written in <model>/diffusion_folder/logging/args.txt
 (angle_start, angle_end, angle_stride) when that file exists; this script prints
 it next to the peak so the two can be compared.
 
-Models are given as config JSONs (--config) or as model folders (--model),
-whose arc, stride, unet_dim and sampling steps are read from their args.txt.
+Models are given as config JSONs (--config) or as model folders with their
+arc and row stride, --model FOLDER:ARC:STRIDE (the saved checkpoint holds only
+weights; if the folder has a diffusion_folder/logging/args.txt its values are
+used and ARC:STRIDE may be left out).
 For a full 360 deg arc only the row phase matters, so those models are swept
 over their `stride` possible phases instead of 0..360 deg.
 
     python -m baselines.sdflow.start_sweep --config configurations/Limited45Sparse10.json
-    python -m baselines.sdflow.start_sweep --model best_model_folder/LimitedView90 \\
-        --model best_model_folder/Sparse8 --step 5 --split val --n_slices 4
+    python -m baselines.sdflow.start_sweep --model best_model_folder/LimitedView90:90:1 \\
+        --model best_model_folder/Limited_view_45:45:1 --step 5 --split val --n_slices 4
 """
 import argparse
 import csv
@@ -70,13 +72,18 @@ def load_model_specs(configs, models, num_sample_steps):
         with open(config) as f:
             cfg = json.load(f)
         specs.append((os.path.splitext(os.path.basename(config))[0], cfg))
-    for folder in models:
+    for spec in models:
+        folder, *rest = spec.split(':')
         a = train_args(folder)
-        if not all(k in a for k in ('angle_start', 'angle_end', 'angle_stride')):
-            raise SystemExit(f'{folder}: no diffusion_folder/logging/args.txt with the angles; pass a --config instead')
+        if len(rest) == 2:
+            start, arc, stride = 0.0, float(rest[0]), int(rest[1])
+        elif all(k in a for k in ('angle_start', 'angle_end', 'angle_stride')):
+            start, arc, stride = a['angle_start'], a['angle_end'] - a['angle_start'], a['angle_stride']
+        else:
+            raise SystemExit(f'{folder}: no args.txt with the angles; give the arc and stride as FOLDER:ARC:STRIDE')
         specs.append((os.path.basename(os.path.normpath(folder)),
-                      {'bfs_dynamic_folder': folder, 'angle_start': a['angle_start'], 'angle_end': a['angle_end'],
-                       'angle_stride': a['angle_stride'], 'sample_H': a.get('sample_H', SAMPLE_H),
+                      {'bfs_dynamic_folder': folder, 'angle_start': start, 'angle_end': start + arc,
+                       'angle_stride': stride, 'sample_H': a.get('sample_H', SAMPLE_H),
                        'detector_count': a.get('detector_count', 816), 'unet_dim': a.get('unet_dim', 32),
                        'num_sample_steps': a.get('num_sample_steps', 20)}))
     for _, cfg in specs:
@@ -92,7 +99,7 @@ def main():
     add_common_args(parser)   # --angle_* only pick the baselines' cache folder for slices and labels
     parser.add_argument('--config', action='append', default=[], help='SD-Flow config JSON; repeat for several models')
     parser.add_argument('--model', action='append', default=[],
-                        help='SD-Flow model folder (bfs_dynamic_folder) whose args.txt gives arc, stride and network')
+                        help='SD-Flow model folder as FOLDER:ARC_DEG:STRIDE, e.g. best_model_folder/LimitedView90:90:1')
     parser.add_argument('--step', type=float, default=5, help='start angles every STEP degrees')
     parser.add_argument('--split', default='val', help='val (default) or test')
     parser.add_argument('--n_slices', type=int, default=4, help='evenly spaced slices of the split')
