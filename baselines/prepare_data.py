@@ -124,8 +124,11 @@ def _stats(sd, offset, op_norm_sq, rls_beta, cond, n_sample=256):
     stats = {'cond_indices': cond, 'op_norm_sq': op_norm_sq, 'rls_beta': rls_beta}
     stats_path = os.path.join(sd, 'stats.json')
     if os.path.exists(stats_path):      # keep the ranges of images written earlier
-        with open(stats_path) as f:
-            stats.update({k: v for k, v in json.load(f).items() if k.endswith(('_lo', '_hi')) or k == 'z_scale'})
+        try:
+            with open(stats_path) as f:
+                stats.update({k: v for k, v in json.load(f).items() if k.endswith(('_lo', '_hi')) or k == 'z_scale'})
+        except ValueError:                  # empty or half-written file from an interrupted run
+            pass
     for name in IMAGES:
         if not os.path.exists(os.path.join(train.dir, name + '.npy')):
             continue
@@ -204,8 +207,12 @@ def main():
     op_norm_sq = op.norm_sq()
     op.close()
 
-    with open(os.path.join(sd, 'stats.json'), 'w') as f:
-        json.dump(_stats(sd, offset, op_norm_sq, rls_beta, cond), f, indent=2)
+    # compute before opening the file: _stats reads the existing stats.json, and 'w' empties it
+    stats = _stats(sd, offset, op_norm_sq, rls_beta, cond)
+    tmp = os.path.join(sd, 'stats.json.tmp')
+    with open(tmp, 'w') as f:
+        json.dump(stats, f, indent=2)
+    os.replace(tmp, os.path.join(sd, 'stats.json'))
     print(f'Done: {sd}  (' + ', '.join(f'{n} {len(manifest[n])} slices' for n in SPLITS) + ')')
 
 

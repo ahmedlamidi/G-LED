@@ -26,3 +26,4 @@ wandb/
 /*_sweep
 /*_sweep/
 /sdflow_start_sweep
+/disk_report*.txt

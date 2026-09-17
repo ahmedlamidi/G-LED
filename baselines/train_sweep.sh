@@ -35,6 +35,16 @@ SETTINGS="${SETTINGS:-0 45 1;0 90 1;0 270 1;0 360 2;0 360 4;0 360 8;0 360 10}"
 DOLCE_HOURS="${DOLCE_HOURS:-22}"          # cap; the plateau rule usually stops earlier
 FBPCONV_HOURS="${FBPCONV_HOURS:-12}"
 MAX_RESUBMITS="${MAX_RESUBMITS:-12}"
+BASE_SETTING="${BASE_SETTING:-limited0-45_stride10}"
+# patients per split, read from the base setting so every setting has the same split
+read -r N_TRAIN N_VAL N_TEST < <("$PY" - "data/baselines_cache/$BASE_SETTING/split.json" <<'PYEOF'
+import json, sys
+p = json.load(open(sys.argv[1]))['patients']
+print(len(p['train']), len(p['val']), len(p['test']))
+PYEOF
+)
+[ -n "$N_TEST" ] || { echo "train_sweep: cannot read data/baselines_cache/$BASE_SETTING/split.json"; exit 1; }
+echo "train_sweep: split from $BASE_SETTING: $N_TRAIN train / $N_VAL val / $N_TEST test patients"
 WALL_H="${WALL_H:-168}"                    # hours this job may use; matches --time above
 
 hours_left() { echo $(( (WALL_H * 3600 - SECONDS) / 3600 )); }
@@ -67,9 +77,24 @@ for spec in "${LIST[@]}"; do
 		fbpconvnet) IMAGES=label,fbp_in ;;
 		*) echo "unknown METHOD $METHOD"; exit 1 ;;
 	esac
+	# One prepare at a time per setting: two jobs writing the same memory-mapped arrays
+	# over NFS crash each other (bus error). mkdir is atomic on NFS, so it serves as the lock.
+	LOCK="data/baselines_cache/.prepare_$TAG.lock"
+	mkdir -p data/baselines_cache
+	WAITED=0
+	until mkdir "$LOCK" 2>/dev/null; do
+		[ "$WAITED" -ge 7200 ] && fail "another job has held $LOCK for 2 h; remove it if that job is gone"
+		[ "$WAITED" -eq 0 ] && echo "train_sweep: waiting for another job's prepare of $TAG ($LOCK)"
+		sleep 60; WAITED=$((WAITED + 60))
+	done
+	trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+	# same split as the base setting (its test patients), so labels can be shared and nothing is sampled twice
 	run baselines.prepare_data --data_root "${DATA_ROOT:-data/LIDC-IDRI}" "${ANGLES[@]}" \
-		--images "$IMAGES" --label_from "data/baselines_cache/${BASE_SETTING:-limited0-45_stride10}" \
-		|| fail "prepare failed for $TAG"
+		--n_train "$N_TRAIN" --n_val "$N_VAL" --n_test "$N_TEST" \
+		--images "$IMAGES" --label_from "data/baselines_cache/$BASE_SETTING"
+	STATUS=$?
+	rmdir "$LOCK" 2>/dev/null; trap - EXIT
+	[ "$STATUS" -eq 0 ] || fail "prepare failed for $TAG"
 	if [ ! -f "$OUT/train_done" ]; then
 		LEFT=$(( $(hours_left) - 1 ))       # keep an hour for the checkpoint and sampling
 		case "$METHOD" in
