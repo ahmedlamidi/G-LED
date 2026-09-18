@@ -58,3 +58,12 @@ def method_dir(args, method):
     path = os.path.join(args.out_root, setting_tag(args), method)
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def dps_prior(base_dir):
+    """DPS's prior under a setting's output folder: the dedicated unconditional model (dps_prior, trained
+    with --p_uncond 1) once its training has finished, else DOLCE's unconditional branch."""
+    own = os.path.join(base_dir, 'dps_prior')
+    if os.path.exists(os.path.join(own, 'train_done')):
+        return os.path.join(own, 'last.pt')
+    return os.path.join(base_dir, 'dolce', 'last.pt')

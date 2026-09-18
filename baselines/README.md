@@ -11,7 +11,7 @@ data, measured views and label:
 | `fbpconvnet/` | FBPConvNet (Jin et al. 2017) | yes | best val checkpoint |
 | `dolce/` | DOLCE (Liu et al., ICCV 2023) | yes | prox variant and weight, picked on val |
 | `sword/` | SWORD (Xu et al., TMI 2024) | yes (2 models) | none |
-| `dps/` | DPS (Chung et al., ICLR 2023) | no, reuses DOLCE's unconditional branch | step size zeta, picked on val |
+| `dps/` | DPS (Chung et al., ICLR 2023) | one unconditional prior for all settings (`dps/train_prior.sh`) | step size zeta, picked on val |
 | `dudotrans/` | DuDoTrans (Wang et al., 2021) | yes | best val checkpoint |
 
 ## What is shared, so the comparison is fair
@@ -54,7 +54,8 @@ depend only on what's listed in the "After" column.
 | DOLCE sample | `sbatch baselines/dolce/sample.sh` | DOLCE train | ~4 h |
 | SWORD train | `sbatch baselines/sword/train.sh full` and `... high` | prepare | 22 h each, in parallel |
 | SWORD sample | `sbatch baselines/sword/sample.sh` | both SWORD trains | ~5 h |
-| DPS sample | `sbatch baselines/dps/sample.sh` | DOLCE train (its checkpoint is the prior) | ~30 min tuning + ~1 min per slice |
+| DPS prior | `sbatch baselines/dps/train_prior.sh` | prepare | ~17-22 h, once |
+| DPS sample | `sbatch baselines/dps/sample.sh` | DPS prior (else DOLCE's checkpoint) | ~30 min tuning + ~1 min per slice |
 | DuDoTrans | `sbatch baselines/dudotrans/run.sh` | prepare | up to 20 h (validation patience), test in minutes |
 | SD-Flow sample | `sbatch baselines/sdflow/sample.sh --config configurations/<run>.json` | prepare, a trained SD-Flow | depends on its sampling steps |
 | View sweep | `sbatch baselines/sweep.sh` | both SWORD trains | ~1 h (SWORD on 8 settings x 10 slices) |
@@ -176,10 +177,12 @@ Results are written to `output/baselines/<setting>/evaluation/`:
 * **DPS** follows Algorithm 1 of the paper: ancestral DDPM sampling, and at every
   step the gradient of ||y - A x0_hat||_2 (the norm, not its square) with respect
   to x_t, backpropagated through the denoiser. Differences:
-  - the prior is DOLCE's network with its condition zeroed (DOLCE trains with 20%
-    condition dropout, so that branch is an unconditional model of the labels), not
-    a separately trained unconditional model. `dolce/train.py --p_uncond 1 --name
-    dps_prior` trains a dedicated one, used with `--prior`.
+  - the prior is DOLCE's network and training recipe with the condition always
+    dropped (`dps/train_prior.sh` -> `<default setting>/dps_prior`, one model for all
+    view settings, ~17-22 h), not the paper's ADM architecture. Until that training
+    has finished, DOLCE's own checkpoint is used with its condition zeroed (20%
+    condition dropout makes that branch an unconditional model, but with a fifth of
+    the training). A folder holds results of one prior only (`--name` for another).
   - 1000 reverse steps as in the paper, by respacing DOLCE's T = 2000 schedule
     (every 2nd timestep) the way guided-diffusion does
   - A is the fan-beam projector in physical units (label + K), y = s + 1; its

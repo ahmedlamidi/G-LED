@@ -44,7 +44,7 @@ import numpy as np
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 
-from .common.config import DEFAULT_CACHE_ROOT, DEFAULT_OUT_ROOT, cond_indices, setting_tag  # noqa: E402
+from .common.config import DEFAULT_CACHE_ROOT, DEFAULT_OUT_ROOT, cond_indices, dps_prior, setting_tag  # noqa: E402
 from .common.ct import sparse_fbp  # noqa: E402
 from .common.data import SplitData, load_offset  # noqa: E402
 from .common.metrics import METRICS, ct_scores, sino_scores, to_hu, water_level  # noqa: E402
@@ -177,7 +177,7 @@ def main():
     parser.add_argument('--base_cache', default=DEFAULT_CACHE_ROOT)
     parser.add_argument('--base_out', default=DEFAULT_OUT_ROOT, help='where the trained SWORD and its results are')
     parser.add_argument('--sword_dir', default=None, help='default: <base_out>/<base_setting>/sword')
-    parser.add_argument('--dps_prior', default=None, help='default: <base_out>/<base_setting>/dolce/last.pt')
+    parser.add_argument('--dps_prior', default=None, help='default: <base_out>/<base_setting>/dps_prior/last.pt once trained, else .../dolce/last.pt')
     parser.add_argument('--cache_root', default=os.path.join(DEFAULT_CACHE_ROOT, 'sword_sweep'))
     parser.add_argument('--out_root', default=os.path.join(DEFAULT_OUT_ROOT, 'sword_sweep'))
     parser.add_argument('--methods', default='fbp,sword', help=f'comma-separated, from {", ".join(NAMES)}')
@@ -238,7 +238,7 @@ def main():
                 if n:
                     log(f'{s.label}: reused {n} DPS slices from {args.base_out}')
             if not args.no_sample:
-                prior = args.dps_prior or os.path.join(args.base_out, args.base_setting, 'dolce', 'last.pt')
+                prior = args.dps_prior or dps_prior(os.path.join(args.base_out, args.base_setting))
                 cmd = [sys.executable, '-m', 'baselines.dps.sample', '--angle_start', str(s.start),
                        '--angle_end', str(s.end), '--angle_stride', str(s.stride), '--cache_root', args.cache_root,
                        '--out_root', args.out_root, '--device', args.device, '--prior', os.path.abspath(prior),

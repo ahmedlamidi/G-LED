@@ -13,8 +13,9 @@ measured rows. Nothing is trained per view setting: one prior serves them all.
 
 The prior is a DOLCE checkpoint run with its condition zeroed. DOLCE is trained
 with 20% condition dropout, so that branch is an unconditional model of the
-label images; a prior trained for the purpose is `python -m baselines.dolce.train
---p_uncond 1 --name dps_prior`, then `--prior <that folder>/last.pt` here.
+label images. The dedicated prior is the same network trained with the condition
+always dropped (dps/train_prior.sh -> <default setting>/dps_prior); once its
+training has finished it is the default --prior, before that DOLCE's is.
 
 zeta is tuned on validation slices (body SSIM) and saved in tuned.json; a run
 without tuned.json tunes first, --tune only tunes. The gradient is divided by
@@ -31,7 +32,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from ..common.config import DEFAULT_OUT_ROOT, add_common_args, cond_indices, method_dir, setting_dir
+from ..common.config import DEFAULT_OUT_ROOT, add_common_args, cond_indices, dps_prior, method_dir, setting_dir
 from ..common.ct import MeasuredOperator
 from ..common.data import Normalizer, SplitData, load_offset
 from ..common.metrics import ct_scores
@@ -103,8 +104,9 @@ class DPS:
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_common_args(parser)
-    parser.add_argument('--prior', default=os.path.join(DEFAULT_OUT_ROOT, 'limited0-45_stride10', 'dolce', 'last.pt'),
-                        help='DOLCE-style checkpoint whose unconditional branch is the prior')
+    parser.add_argument('--prior', default=dps_prior(os.path.join(DEFAULT_OUT_ROOT, 'limited0-45_stride10')),
+                        help='DOLCE-style checkpoint whose unconditional branch is the prior; default: the '
+                             'finished dps_prior of the default setting, else its dolce')
     parser.add_argument('--steps', type=int, default=1000, help='reverse steps (the paper: 1000)')
     parser.add_argument('--zeta', type=float, default=None, help='step size; default: tuned.json, else 1')
     parser.add_argument('--tune', action='store_true', help='only pick zeta on validation slices')
@@ -115,9 +117,10 @@ def main():
     parser.add_argument('--batch_size', type=int, default=4)
     parser.add_argument('--split', default='test')
     parser.add_argument('--max_slices', type=int, default=0, help='only the first N slices (0 = all)')
+    parser.add_argument('--name', default='dps', help='method folder, e.g. dps_dolce for a run with another prior')
     args = parser.parse_args()
 
-    out = method_dir(args, 'dps')
+    out = method_dir(args, args.name)
     log = Logger(os.path.join(out, 'log.txt'))
     device = pick_device(args.device)
     ckpt = load_checkpoint(args.prior)
@@ -136,6 +139,13 @@ def main():
     dps = DPS(model, ckpt['cfg'], op, cond, offset, Normalizer(*ckpt['label_norm']), args.steps, device)
     tuned_path = os.path.join(out, 'tuned.json')
     log(f'dps: prior {args.prior} (iteration {ckpt.get("iter")}), {len(cond)} views, {len(dps.ts)} steps')
+
+    if os.path.exists(tuned_path) and not args.tune:
+        with open(tuned_path) as f:
+            before = json.load(f).get('prior')
+        if before and os.path.abspath(before) != os.path.abspath(args.prior):
+            raise SystemExit(f'{out} holds results of another prior ({before}); pass a different --name '
+                             f'or delete that folder')
 
     if args.tune or (args.zeta is None and not os.path.exists(tuned_path)):
         val = SplitData(args.tune_dir or sd, 'val')

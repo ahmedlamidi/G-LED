@@ -29,15 +29,16 @@ from .model import alphas_cumprod, build_model, condition
 
 
 class DolceData(Dataset):
-    def __init__(self, data, norm):
-        self.data, self.norm = data, norm
+    def __init__(self, data, norm, use_cond=True):
+        self.data, self.norm, self.use_cond = data, norm, use_cond
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, i):
         x0 = np.clip(self.norm.to_unit(self.data.image('label', i)), -1, 1).astype(np.float32)
-        c = condition(self.data.image('rls', i))
+        # an unconditional prior (p_uncond 1, DPS) never sees the condition, so it needs no RLS array
+        c = condition(self.data.image('rls', i)) if self.use_cond else np.zeros_like(x0)
         return torch.from_numpy(x0)[None], torch.from_numpy(c)[None]
 
 
@@ -101,7 +102,7 @@ def main():
         log(f'resumed at iteration {it} ({hours_before:.2f} h)')
 
     acp = torch.tensor(alphas_cumprod(cfg['T']), dtype=torch.float32, device=device)
-    data = DolceData(SplitData(sd, 'train'), norm)
+    data = DolceData(SplitData(sd, 'train'), norm, use_cond=args.p_uncond < 1)
     loader = DataLoader(data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers,
                         pin_memory=True, drop_last=len(data) > args.batch_size,
                         persistent_workers=args.workers > 0)

@@ -9,8 +9,8 @@
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-user=ahmedlamidi@usf.edu
 #
-# DPS reconstruction of the test slices with DOLCE's unconditional branch as
-# the prior (no training of its own). Tunes zeta on validation slices first if
+# DPS reconstruction of the test slices. Prior: dps_prior (dps/train_prior.sh)
+# once trained, else DOLCE's unconditional branch. Tunes zeta on validation slices first if
 # tuned.json does not exist. About 1 min per slice; resubmitting skips slices
 # already done.
 #
