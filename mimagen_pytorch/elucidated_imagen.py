@@ -1,5 +1,6 @@
 import pdb
 
+import math
 from math import sqrt
 from random import random
 from functools import partial
@@ -108,9 +109,11 @@ class ElucidatedImagen(nn.Module):
             S_tmin=0.05,
             S_tmax=50,
             S_noise=1.003,
-            physics_loss_weight=0.1,  # weight for physics-informed loss: p(s, θ) = p(-s, θ + 180°)
+            physics_loss_weight=0.1,  # weight of the conjugate-ray symmetry loss
             physics_sigma_threshold=1.0,  # only apply physics loss when sigma < this value
             physics_anchor='selected',  # 'selected' = anchor symmetry on the measured angles, 'global' = all row pairs
+            physics_geometry='fan',  # 'fan' = p(θ, u) = p(θ + 180° - 2γ, -u), 'parallel' = p(θ, s) = p(θ + 180°, -s)
+            physics_fan_distance=1600.,  # source to detector (DSO + ODD of data/dicom_preprocess.py), in det_spacing's unit
     ):
         super().__init__()
 
@@ -217,6 +220,10 @@ class ElucidatedImagen(nn.Module):
         assert physics_anchor in ('selected', 'global'), \
             f"physics_anchor must be 'selected' or 'global', got {physics_anchor}"
         self.physics_anchor = physics_anchor
+        assert physics_geometry in ('fan', 'parallel'), \
+            f"physics_geometry must be 'fan' or 'parallel', got {physics_geometry}"
+        self.physics_geometry = physics_geometry
+        self.physics_fan_distance = physics_fan_distance
 
         # elucidating parameters
 
@@ -816,6 +823,56 @@ class ElucidatedImagen(nn.Module):
     def noise_distribution(self, P_mean, P_std, batch_size):
         return (P_mean + P_std * torch.randn((batch_size,), device=self.device)).exp()
 
+    def conjugate_ray_loss(self, pred, sigmas, total_angles, cond_indices=None, det_spacing=None):
+        """Every line through the object is measured twice over 360°, so the two
+        readings must agree. With the flat-detector fan beam of
+        data/dicom_preprocess.py (ASTRA 'fanflat') the ray at view θ and detector
+        coordinate u, fan angle γ = atan(u / (DSO + ODD)), is the ray at view
+        θ + 180° - 2γ and coordinate -u. The partner view falls between two rows
+        and is interpolated linearly. 'parallel' drops the 2γ, which is only
+        right on the central detector: at the detector edge it is off by 35 to
+        57 views here, and a ground-truth sinogram scores about 1e-2 instead of 0.
+
+        pred: [B, ..., H, W] denoised sinograms, det_spacing: [B] detector pitch
+        of each sinogram (fan only). Samples with sigma above the threshold, where
+        the denoised prediction is not meaningful, are left out.
+        """
+        B, (H, W), device = pred.shape[0], pred.shape[-2:], pred.device
+        pred = pred.reshape(B, -1, H, W).float()
+
+        rows_per_rad = total_angles / (2 * math.pi)
+        shift = torch.full((B, W), math.pi * rows_per_rad, device=device)
+        if self.physics_geometry == 'fan':
+            assert exists(det_spacing), "physics_geometry='fan' needs det_spacing, the detector pitch of each sinogram"
+            det_spacing = torch.as_tensor(det_spacing, dtype=torch.float, device=device).reshape(-1, 1).expand(B, 1)
+            u = (torch.arange(W, device=device) - (W - 1) / 2) * det_spacing
+            shift = shift - 2 * torch.atan(u / self.physics_fan_distance) * rows_per_rad
+        lo = shift.floor()
+        frac = (shift - lo)[:, None, None]                         # [B, 1, 1, W]
+        lo = lo.long()[:, None]                                    # [B, 1, W]
+
+        if self.physics_anchor == 'selected' and exists(cond_indices) and len(cond_indices) > 0:
+            # Anchor the constraint on the angles that were actually measured.
+            # Every anchor row is conditioning the model has seen, so tying it
+            # to its conjugate partner transports measured information into an
+            # unmeasured row. Over all rows instead, sparse coverage mostly
+            # puts one hallucinated row against another, which the model can
+            # satisfy by being self-consistently wrong.
+            anchors = torch.as_tensor(cond_indices, dtype=torch.long, device=device)
+            anchors = anchors[anchors < total_angles]
+        else:
+            anchors = torch.arange(total_angles, device=device)
+
+        rows = anchors[None, :, None] + lo                         # [B, A, W]
+        b = torch.arange(B, device=device)[:, None, None]
+        flipped = torch.arange(W - 1, -1, -1, device=device)
+        partner = (1 - frac) * pred[b, :, rows % total_angles, flipped].movedim(-1, 1) \
+            + frac * pred[b, :, (rows + 1) % total_angles, flipped].movedim(-1, 1)   # [B, C, A, W]
+        per_sample = (pred[:, :, anchors] - partner).pow(2).mean(dim=(1, 2, 3))
+
+        low_noise = (sigmas < self.physics_sigma_threshold).float()
+        return (per_sample * low_noise).sum() / low_noise.sum().clamp(min=1)
+
     def forward(
             self,
             images,  # rename to images or video
@@ -827,6 +884,7 @@ class ElucidatedImagen(nn.Module):
             cond_images=None,
             total_angles=720,
             cond_indices=None,       # anchors the physics loss on the measured angles
+            det_spacing=None,        # [B] detector pitch per sinogram, for the fan-beam physics loss
             label_indices=None,      # legacy (unused with mask conditioning)
             original_pred_h=None,    # legacy (unused with mask conditioning)
             original_cond_h=None,    # legacy (unused with mask conditioning)
@@ -960,7 +1018,7 @@ class ElucidatedImagen(nn.Module):
         # Because 'unet' can be an instance of DistributedDataParallel coming from the
         # ImagenTrainer.unet_being_trained when invoking ImagenTrainer.forward(), we need to
         # access the member 'module' of the wrapped unet instance.
-        self_cond = unet.module.self_cond if isinstance(unet, DistributedDataParallel) else unet
+        self_cond = unet.module.self_cond if isinstance(unet, DistributedDataParallel) else unet.self_cond
 
         if self_cond and random() < 0.5:
             with torch.no_grad():
@@ -988,62 +1046,15 @@ class ElucidatedImagen(nn.Module):
         # loss weighting
         losses = losses * self.loss_weight(hp.sigma_data, sigmas)
         
-        physics_loss = torch.tensor(0.0, device=images.device)
-
-        can_compute_physics = (
-            self.physics_loss_weight > 0
-            and exists(total_angles)
-            and total_angles > 1
-        )
-
-        if can_compute_physics:
-            # Only enforce symmetry for samples with low noise (sigma < threshold),
-            # where the denoised prediction is meaningful.
-            low_noise_mask = sigmas < self.physics_sigma_threshold  # [B]
-
-            if low_noise_mask.any():
-                # Conjugate-ray symmetry: p(θ, s) = p(θ + 180°, -s), where
-                # θ + 180° is half the rows further down the sinogram and -s is
-                # a flip along the detector axis.
-                denoised_low = denoised_images[low_noise_mask]
-                half = total_angles // 2
-
-                use_selected = (
-                    self.physics_anchor == 'selected'
-                    and exists(cond_indices)
-                    and len(cond_indices) > 0
-                )
-
-                if use_selected:
-                    # Anchor the constraint on the angles that were actually
-                    # measured. Every anchor row is conditioning the model has
-                    # seen, so tying it to its conjugate partner transports
-                    # measured information into an unmeasured row.
-                    #
-                    # Comparing all 360 row pairs instead (the `else` branch)
-                    # is mostly vacuous under sparse coverage: with 9 measured
-                    # views, 351 of the 360 pairs put one hallucinated row
-                    # against another, which the model can satisfy by being
-                    # self-consistently wrong while diluting the gradient from
-                    # the pairs that carry real information.
-                    anchors = torch.as_tensor(cond_indices, dtype=torch.long,
-                                              device=denoised_low.device)
-                    anchors = anchors[anchors < total_angles]
-                    partners = (anchors + half) % total_angles
-                    pred_anchor  = denoised_low[..., anchors, :]
-                    pred_partner = denoised_low[..., partners, :]
-                    physics_loss = F.mse_loss(pred_anchor,
-                                              torch.flip(pred_partner, dims=[-1]))
-                else:
-                    # physics_anchor='global' (or no selection given): symmetry
-                    # over the whole sinogram, with the angular selection
-                    # playing no part in the physics term.
-                    first_half  = denoised_low[..., :half, :]
-                    second_half = denoised_low[..., half:, :]
-                    physics_loss = F.mse_loss(first_half, torch.flip(second_half, dims=[-1]))
+        if self.physics_loss_weight > 0 and exists(total_angles) and total_angles > 1:
+            physics_loss = self.conjugate_ray_loss(denoised_images, sigmas, total_angles,
+                                                   cond_indices=cond_indices, det_spacing=det_spacing)
+        else:
+            physics_loss = torch.zeros((), device=images.device)
 
         # ── Combine losses ────────────────────────────────────────────
         data_loss = losses.mean()
         total_loss = data_loss + self.physics_loss_weight * physics_loss
 
-        return total_loss, data_loss.item(), physics_loss.item()
+        # detached tensors: .item() here would stall the GPU every iteration
+        return total_loss, data_loss.detach(), physics_loss.detach()

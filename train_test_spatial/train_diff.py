@@ -1,166 +1,159 @@
-from tqdm import tqdm
-import torch
-import torch.nn.functional as F
-import pdb
-import sys
 import os
+import time
+
 import numpy as np
+import torch
 import wandb
-sys.path.insert(0, './util')
-from utils import save_loss
+
 
 def train_diff(diff_args,
 			   seq_args,
 			   trainer,
 			   data_loader,
+			   cond_indices,
+			   log,
+			   record,
+			   clock,
 			   start_epoch=0,
-			   cond_indices=None):
-	# Load previous loss lists if resuming (support both old and new format)
-	total_loss_list, data_loss_list, physics_loss_list = [], [], []
-	
-	# Try loading new format first
-	total_file = os.path.join(diff_args.logging_path, 'total_loss.txt')
-	data_file = os.path.join(diff_args.logging_path, 'data_loss.txt')
-	physics_file = os.path.join(diff_args.logging_path, 'physics_loss.txt')
-	
+			   iteration=0,
+			   history=None):
+	"""Logs like baselines/dolce/train.py: an `iter N: loss L (H h)` line and a
+	loss.csv row every --log_every iterations, train_info.json kept up to date at
+	every checkpoint, latest_checkpoint written every --ckpt_minutes. Stops early
+	on the same plateau rule. history: (hours, data loss) per log line, over all
+	segments."""
+	history = [] if history is None else list(history)
+	if cond_indices is None:
+		raise ValueError("cond_indices must be provided — define it in main_diff_bfs.py and pass it through")
+
+	device = torch.device(diff_args.device)
+	save_dir, n_slices = diff_args.model_save_path, len(data_loader.dataset)
+
+	# per-epoch curves, one value per line; a resumed run continues them
+	loss_files = {k: os.path.join(diff_args.logging_path, k + '_loss.txt') for k in ('total', 'data', 'physics')}
+	curves = {k: [] for k in loss_files}
 	if start_epoch > 0:
-		if os.path.exists(total_file):
-			total_loss_list = list(np.loadtxt(total_file))
-			data_loss_list = list(np.loadtxt(data_file)) if os.path.exists(data_file) else []
-			physics_loss_list = list(np.loadtxt(physics_file)) if os.path.exists(physics_file) else []
-			print(f"Loaded {len(total_loss_list)} previous loss values")
+		old_loss_file = os.path.join(diff_args.logging_path, 'loss_curve.txt')
+		if not os.path.exists(loss_files['total']) and os.path.exists(old_loss_file):
+			loss_files_read = {'total': old_loss_file}
 		else:
-			# Fallback to old format
-			old_loss_file = os.path.join(diff_args.logging_path, 'loss_curve.txt')
-			if os.path.exists(old_loss_file):
-				total_loss_list = list(np.loadtxt(old_loss_file))
-				print(f"Loaded {len(total_loss_list)} previous loss values (old format)")
-	
-	# Try to get start_epoch from saved checkpoint epoch file
-	epoch_file = os.path.join(diff_args.model_save_path, 'best_model_sofar_epoch')
-	if start_epoch == 0 and os.path.exists(epoch_file):
-		saved_epoch = int(np.loadtxt(epoch_file)[0])
-		if hasattr(diff_args, 'resume') and diff_args.resume:
-			start_epoch = saved_epoch + 1
-			print(f"Resuming from epoch {start_epoch}")
-	
+			loss_files_read = loss_files
+		for k, path in loss_files_read.items():
+			if os.path.exists(path):
+				curves[k] = list(np.atleast_1d(np.loadtxt(path)))[:start_epoch]
+		log(f"loaded {len(curves['total'])} previous epoch losses")
+
+	def epochs_done():
+		return round(iteration * diff_args.batch_size / n_slices, 2)
+
+	def save(name, epoch):
+		"""epoch: the number of finished epochs, where a resumed run starts."""
+		trainer.save(path=os.path.join(save_dir, name), epoch=epoch, iteration=iteration, hours=clock.total(),
+					 history=history)
+
+	def plateaued():
+		"""Mean data loss over the last plateau_hours vs the plateau_hours before that.
+		The data loss, not the total: the physics term has a different size under
+		each --physics_geometry, and the runs being compared must stop by one rule."""
+		w, t = diff_args.plateau_hours, clock.total()
+		if not w or t < max(diff_args.min_hours, 2 * w):
+			return False
+		last = [l for h, l in history if t - w <= h]
+		prev = [l for h, l in history if t - 2 * w <= h < t - w]
+		if not last or not prev:
+			return False
+		gain = 1 - np.mean(last) / np.mean(prev)
+		if gain < diff_args.plateau_tol:
+			log(f'plateau: mean data loss {np.mean(prev):.5f} -> {np.mean(last):.5f} over the last '
+				f'{2 * w:g} h ({100 * gain:+.1f}%, below {100 * diff_args.plateau_tol:g}%)')
+			return True
+		return False
+
+	# Conditioning is built on the GPU from this one mask:
+	# Channel 0: masked sinogram (known rows filled, zeros elsewhere)
+	# Channel 1: binary mask (1 = known row, 0 = unknown row)
+	# Channel 2: FBP re-projection (coarse full-sinogram estimate)
+	row_mask = torch.zeros(diff_args.sample_H, 1, device=device)
+	row_mask[cond_indices] = 1.0
+
+	window, n_window, last_loss = torch.zeros(3, device=device), 0, None   # total, data, physics
+	last_save = time.time()
 	for epoch in range(start_epoch, diff_args.epoch_num):
-		down_sampler = torch.nn.Upsample(size=seq_args.coarse_dim, 
-								     	 mode=seq_args.coarse_mode)
-		up_sampler   = torch.nn.Upsample(size=[720, 448], 
-								     	 mode=seq_args.coarse_mode)
-		model, loss_components = train_epoch(diff_args,seq_args, trainer, data_loader,down_sampler,up_sampler, cond_indices=cond_indices)
-		total_loss, data_loss, physics_loss = loss_components
-		
-		if epoch % 1 ==0 and epoch > 0:
-			peep = 0
-			#save_loss(diff_args, loss_list+[loss],epoch)
-			#model.save(path=os.path.join(diff_args.model_save_path, 
-			#							 'model_epoch_' + str(epoch)))
-		
-		# Save checkpoint every 10 epochs for resumability
-		if epoch > 0 and epoch % 100 == 0:
-			model.save(path=os.path.join(diff_args.model_save_path, 
-										'checkpoint_epoch_' + str(epoch)))
-			print(f"Saved checkpoint at epoch {epoch}")
-		
-		# Save latest checkpoint (overwritten each epoch for quick resume)
-		model.save(path=os.path.join(diff_args.model_save_path, 'latest_checkpoint'))
-		np.savetxt(os.path.join(diff_args.model_save_path, 'latest_epoch'), np.array([epoch]))
-		
-		# Update loss lists
-		total_loss_list.append(total_loss)
-		data_loss_list.append(data_loss) 
-		physics_loss_list.append(physics_loss)
-		
-		# Save loss values every epoch
-		np.savetxt(os.path.join(diff_args.logging_path, 'total_loss.txt'), total_loss_list)
-		np.savetxt(os.path.join(diff_args.logging_path, 'data_loss.txt'), data_loss_list)
-		np.savetxt(os.path.join(diff_args.logging_path, 'physics_loss.txt'), physics_loss_list)
-		
+		epoch_sum, n_epoch = torch.zeros(3, device=device), 0
+		for batch, fbp_reproj, det_spacing in data_loader:
+			# batch, fbp_reproj: [B, T, 1, H, W], det_spacing: [B]
+			batch = batch.to(device, non_blocking=True)
+			fbp_reproj = fbp_reproj.to(device, non_blocking=True)
+			det_spacing = det_spacing.to(device, non_blocking=True)
+
+			batch_cond = torch.cat([batch * row_mask, row_mask.expand_as(batch), fbp_reproj], dim=2)
+
+			# Target is the full sinogram; both go to [B, C, T, H, W] for the diffusion model
+			result = trainer(
+				batch.permute([0, 2, 1, 3, 4]),
+				cond_images=batch_cond.permute([0, 2, 1, 3, 4]),
+				unet_number=1,
+				ignore_time=False,
+				total_angles=batch.shape[-2],
+				# Anchors the conjugate-ray symmetry loss on the measured angles
+				# rather than over the whole sinogram.
+				cond_indices=cond_indices,
+				det_spacing=det_spacing
+			)
+			trainer.update(unet_number=1)
+			iteration += 1
+
+			# the losses stay on the GPU until a log line needs them
+			losses = torch.stack([torch.as_tensor(v, dtype=torch.float, device=device) for v in result])
+			window, n_window = window + losses, n_window + 1
+			epoch_sum, n_epoch = epoch_sum + losses, n_epoch + 1
+
+			plateau = False
+			if iteration % diff_args.log_every == 0:
+				last_loss, data_loss, physics_loss = (window / n_window).tolist()
+				history.append((clock.total(), data_loss))
+				record.loss(iteration=iteration, hours=clock.total(), loss=last_loss,
+							data_loss=data_loss, physics_loss=physics_loss)
+				log(f'iter {iteration}: loss {last_loss:.5f} ({clock.total():.2f} h) | '
+					f'data {data_loss:.5f}, physics {physics_loss:.6f}, epoch {epoch}')
+				wandb.log({"iteration": iteration, "hours": clock.total(), "loss": last_loss,
+						   "iter_data_loss": data_loss, "iter_physics_loss": physics_loss})
+				window, n_window = torch.zeros(3, device=device), 0
+				plateau = plateaued()
+
+			finished = clock.run_over() or plateau
+			if finished or clock.segment_over() or time.time() - last_save > diff_args.ckpt_minutes * 60:
+				save('latest_checkpoint', epoch)
+				last_save = time.time()
+				record.update(clock.segment(), iterations=iteration, epochs=epochs_done(), last_loss=last_loss)
+			if finished:
+				reason = 'plateau' if plateau else 'hours_cap'
+				record.finish(reason, clock.segment(), iterations=iteration, epochs=epochs_done(),
+							  last_loss=last_loss)
+				log(f'sdflow: training finished at iteration {iteration} ({reason})')
+				return
+			if clock.segment_over():
+				log(f'sdflow: segment over at iteration {iteration}; resubmit with --resume')
+				return
+
+		total_loss, data_loss, physics_loss = (epoch_sum / max(n_epoch, 1)).tolist()
+		best_before = min(curves['total'], default=float('inf'))
+		for k, v in zip(('total', 'data', 'physics'), (total_loss, data_loss, physics_loss)):
+			curves[k].append(v)
+			np.savetxt(loss_files[k], curves[k])
+
 		# Save best model when total loss improves
-		if epoch >= 1 and total_loss < min(total_loss_list[:-1], default=float('inf')):
-			model.save(path=os.path.join(diff_args.model_save_path, 
-										'best_model_sofar'))
-			np.savetxt(os.path.join(diff_args.model_save_path, 
-								'best_model_sofar_epoch'),np.ones(2)*epoch)
-		
-		# Log to wandb
+		if epoch >= 1 and total_loss < best_before:
+			save('best_model_sofar', epoch + 1)
+
 		wandb.log({
 			"epoch": epoch,
 			"total_loss": total_loss,
 			"data_loss": data_loss,
 			"physics_loss": physics_loss,
 		})
+		log(f'epoch {epoch} done: loss {total_loss:.5f}, data {data_loss:.5f}, physics {physics_loss:.6f}')
 
-		print(f"Epoch {epoch}: Total Loss={total_loss:.6f}, Data Loss={data_loss:.6f}, Physics Loss={physics_loss:.6f}")
-
-
-def train_epoch(diff_args, seq_args, trainer, data_loader, down_sampler, up_sampler, cond_indices=None):
-    loss_epoch = []
-    data_loss_epoch = []
-    physics_loss_epoch = []
-
-    if cond_indices is None:
-        raise ValueError("cond_indices must be provided — define it in main_diff_bfs.py and pass it through")
-
-    for iteration, batch_data in tqdm(enumerate(data_loader)):
-        # Unpack: batch [B, T, C, H, W], fbp_reproj [B, T, C, H, W]
-        if isinstance(batch_data, (list, tuple)):
-            batch, fbp_reproj = batch_data
-        else:
-            batch = batch_data
-            fbp_reproj = None
-
-        H, W = batch.shape[-2], batch.shape[-1]
-
-        # Build mask-based conditioning: full-resolution
-        # Channel 0: masked sinogram (known rows filled, zeros elsewhere)
-        # Channel 1: binary mask (1 = known row, 0 = unknown row)
-        # Channel 2: FBP re-projection (coarse full-sinogram estimate)
-        masked_sino = torch.zeros_like(batch)
-        mask = torch.zeros_like(batch)
-        masked_sino[..., cond_indices, :] = batch[..., cond_indices, :]
-        mask[..., cond_indices, :] = 1.0
-
-        # Concatenate along channel dim
-        if fbp_reproj is not None:
-            batch_cond = torch.cat([masked_sino, mask, fbp_reproj], dim=2)  # [B, T, 3, H, W]
-        else:
-            batch_cond = torch.cat([masked_sino, mask], dim=2)  # [B, T, 2, H, W]
-
-        # Target is the full sinogram: [B, T, 1, H, W]
-        # Permute both to [B, C, T, H, W] for the diffusion model
-        batch_label = batch.permute([0, 2, 1, 3, 4])       # [B, 1, T, H, W]
-        batch_cond  = batch_cond.permute([0, 2, 1, 3, 4])  # [B, 3, T, H, W]
-
-        result = trainer(
-            batch_label,
-            cond_images=batch_cond,
-            unet_number=1,
-            ignore_time=False,
-            total_angles=H,
-            # Anchors the conjugate-ray symmetry loss on the measured angles
-            # rather than over the whole sinogram.
-            cond_indices=cond_indices
-        )
-        trainer.update(unet_number=1)
-
-        # Properly unpack tuple
-        if isinstance(result, tuple):
-            loss, data_loss, physics_loss = result
-            data_loss_epoch.append(data_loss)
-            physics_loss_epoch.append(physics_loss)
-        else:
-            loss = result
-
-        loss_epoch.append(loss)
-
-    avg_loss = sum(loss_epoch) / len(loss_epoch)
-    avg_data = sum(data_loss_epoch) / len(data_loss_epoch) if data_loss_epoch else avg_loss
-    avg_phys = sum(physics_loss_epoch) / len(physics_loss_epoch) if physics_loss_epoch else 0.0
-    if data_loss_epoch:
-        print(f"Epoch avg | data: {avg_data:.4f} "
-              f"| physics: {avg_phys:.6f}")
-
-    return trainer, (avg_loss, avg_data, avg_phys)
+	save('latest_checkpoint', diff_args.epoch_num)
+	record.finish('epoch_num', clock.segment(), iterations=iteration, epochs=epochs_done(), last_loss=last_loss)
+	log(f'sdflow: training finished at iteration {iteration} (epoch_num)')

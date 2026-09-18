@@ -65,9 +65,11 @@ def main():
     parser.add_argument('--ckpt_minutes', type=float, default=30)
     parser.add_argument('--log_every', type=int, default=100)
     parser.add_argument('--workers', type=int, default=4)
+    parser.add_argument('--name', default='dolce',
+                        help="output folder under the setting; e.g. dps_prior with --p_uncond 1 for DPS's prior")
     args = parser.parse_args()
 
-    out = method_dir(args, 'dolce')
+    out = method_dir(args, args.name)
     log = Logger(os.path.join(out, 'log.txt'))
     done = os.path.join(out, 'train_done')
     if os.path.exists(done):
@@ -108,7 +110,7 @@ def main():
     log(f'train {len(data)} slices, {n_params / 1e6:.1f}M parameters, cfg {cfg}')
     cond = cond_indices(args.angle_start, args.angle_end, args.angle_stride)
     record = TrainRecord(out, {
-        'method': 'dolce',
+        'method': args.name,
         'setting': {'angle_start': args.angle_start, 'angle_end': args.angle_end, 'angle_stride': args.angle_stride,
                     'n_views': len(cond), 'rows': f'{cond[0]}..{cond[-1]} step {args.angle_stride}'},
         'data': {'train_slices': len(data), 'setting_dir': sd, 'label_norm': [norm.lo, norm.hi]},

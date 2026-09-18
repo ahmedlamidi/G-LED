@@ -1,5 +1,5 @@
 {
-  "bfs_dynamic_folder": "best_model_folder/720_816_limited45_PHYSICS_ONLY",
+  "bfs_dynamic_folder": "best_model_folder/720_816_limited45_PHYSICS_ONLY_FAN",
   "Nt_read": 40,
   "use_best": true,
   "Nepoch_read": 2,

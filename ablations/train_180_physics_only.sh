@@ -12,7 +12,10 @@
 #
 # Condition : the selected angles, every 10th index inside 0-180 deg
 #             -> 36 of 720 views
-# Physics   : on, anchored on the conditioned rows
+# Physics   : on, anchored on the conditioned rows. PHYSICS_GEOMETRY picks the ray
+#             pairing: fan (default) is the scanner's conjugate ray, parallel is
+#             the earlier loss. Each trains into its own folder, so the two
+#             models compare the pairings with everything else equal.
 #
 # The four ablations are two coverage cases (45 deg, 180 deg) x two experiment
 # types. Both types condition on the same sparse-10 selection, so within a
@@ -23,7 +26,8 @@
 #
 # Everything outside the "ABLATION KNOBS" block is identical across the four.
 #
-#   sbatch ablations/train_180_physics_only.sh
+#   sbatch ablations/train_180_physics_only.sh                              # fan beam -> ..._PHYSICS_ONLY_FAN
+#   PHYSICS_GEOMETRY=parallel sbatch ablations/train_180_physics_only.sh    # parallel -> ..._PHYSICS_ONLY
 #   RESUME=1 sbatch ablations/train_180_physics_only.sh     # continue after the 24h wall clock
 #   INSTALL_DEPS=1 sbatch ablations/train_180_physics_only.sh
 
@@ -40,18 +44,23 @@ export TMP=/home/a/ahmedlamidi/tmp
 # ── ABLATION KNOBS ──────────────────────────────────────────────────────────
 # At sample_H = 720 one index is 0.5 deg, so stride 10 keeps every 10th index,
 # i.e. one view per 5 deg.
+PHYSICS_GEOMETRY=${PHYSICS_GEOMETRY:-fan}   # fan | parallel
 RUN_FOLDER=output/720_816_limited180_PHYSICS_ONLY
+[ "$PHYSICS_GEOMETRY" = fan ] && RUN_FOLDER=${RUN_FOLDER}_FAN
 ANGLE_START=0
 ANGLE_END=180
 ANGLE_STRIDE=10           # -> 36 of 720 views
 PHYSICS_LOSS_WEIGHT=0.1
 PHYSICS_ANCHOR=selected   # anchor the symmetry on the conditioned rows
 # Held fixed across the whole grid, so the runs stay comparable.
+# The baselines' train split (baselines/prepare_data.py); the slices do not depend on the setting.
+SLICES_JSON=${SLICES_JSON:-data/baselines_cache/limited0-45_stride10/train/slices.json}
 BATCH_SIZE=8
 EPOCH_NUM=500
+PLATEAU_HOURS=${PLATEAU_HOURS:-3}   # early stopping window; PLATEAU_HOURS=0 trains all EPOCH_NUM epochs
 UNET_DIM=32
 WANDB_PROJECT="sinogram-ablations"
-WANDB_RUN_NAME="abl-45-shapley"
+WANDB_RUN_NAME="abl-180-physics-$PHYSICS_GEOMETRY"
 # ────────────────────────────────────────────────────────────────────────────
 
 # Call the env's interpreter by absolute path so srun cannot fall back to
@@ -144,8 +153,11 @@ srun --export=ALL "$PY" main_diff_bfs.py \
 	--angle_stride "$ANGLE_STRIDE" \
 	--physics_loss_weight "$PHYSICS_LOSS_WEIGHT" \
 	--physics_anchor "$PHYSICS_ANCHOR" \
+	--physics_geometry "$PHYSICS_GEOMETRY" \
+	--slices_json "$SLICES_JSON" \
 	--batch_size "$BATCH_SIZE" \
 	--epoch_num "$EPOCH_NUM" \
+	--plateau_hours "$PLATEAU_HOURS" \
 	--unet_dim "$UNET_DIM" \
 	--wandb_project "$WANDB_PROJECT" \
 	--wandb_run_name "$WANDB_RUN_NAME" \

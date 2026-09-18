@@ -30,8 +30,8 @@ from .common.data import SplitData, load_offset  # noqa: E402
 from .common.metrics import METRICS, body_mask, ct_scores, to_hu, water_level  # noqa: E402
 from .common.runtime import evenly_spaced  # noqa: E402
 
-BASELINES = {'fbp': 'FBP', 'tv': 'TV', 'sart': 'SART', 'fbpconvnet': 'FBP-ConvNet',
-             'dolce': 'DOLCE', 'sword': 'SWORD', 'sdflow': 'SD-Flow'}
+BASELINES = {'fbp': 'FBP', 'tv': 'TV', 'sart': 'SART', 'fbpconvnet': 'FBP-ConvNet', 'dudotrans': 'DuDoTrans',
+             'dolce': 'DOLCE', 'dps': 'DPS', 'sword': 'SWORD', 'sdflow': 'SD-Flow'}
 # Display windows as (level, width) in HU
 WINDOWS = {'lung': (-600, 1500), 'soft': (40, 400), 'bone': (400, 1800)}
 

@@ -12,7 +12,10 @@ Methods:
               the pair trained once (--sword_dir) serves every setting; this
               script links the checkpoints into a small per-setting folder and
               runs sword/sample.py on the picked slices.
-  dolce, fbpconvnet
+  dps         DPS's prior is unconditional (DOLCE's unconditional branch, --dps_prior),
+              so it too is sampled here for every setting; zeta is tuned per setting
+              on the base setting's validation slices.
+  dolce, fbpconvnet, dudotrans
               trained per setting by baselines/train_sweep.sh (they learn the
               streaks of the measured views); their reconstructions are read
               from <base_out>/<setting>/<method>/recon/.
@@ -54,7 +57,9 @@ SETTINGS = [(0, 45, 1), (0, 90, 1), (0, 270, 1),
             (0, 45, 10)]
 SINO_METRICS = [('ssim_sino', 'SSIM sinogram'), ('ssim_sino_unknown', 'SSIM unmeasured rows')]
 CKPT_FILES = ('full_last.pt', 'high_last.pt', 'full_train_done', 'high_train_done')
-NAMES = {'fbp': 'FBP', 'sword': 'SWORD', 'dolce': 'DOLCE', 'fbpconvnet': 'FBP-ConvNet'}
+NAMES = {'fbp': 'FBP', 'sword': 'SWORD', 'dps': 'DPS', 'dolce': 'DOLCE', 'fbpconvnet': 'FBP-ConvNet',
+         'dudotrans': 'DuDoTrans'}
+SAMPLED_HERE = ('sword', 'dps')      # no per-setting training: this script samples them for every setting
 
 
 class Setting:
@@ -172,6 +177,7 @@ def main():
     parser.add_argument('--base_cache', default=DEFAULT_CACHE_ROOT)
     parser.add_argument('--base_out', default=DEFAULT_OUT_ROOT, help='where the trained SWORD and its results are')
     parser.add_argument('--sword_dir', default=None, help='default: <base_out>/<base_setting>/sword')
+    parser.add_argument('--dps_prior', default=None, help='default: <base_out>/<base_setting>/dolce/last.pt')
     parser.add_argument('--cache_root', default=os.path.join(DEFAULT_CACHE_ROOT, 'sword_sweep'))
     parser.add_argument('--out_root', default=os.path.join(DEFAULT_OUT_ROOT, 'sword_sweep'))
     parser.add_argument('--methods', default='fbp,sword', help=f'comma-separated, from {", ".join(NAMES)}')
@@ -179,6 +185,7 @@ def main():
     parser.add_argument('--window', default='lung', choices=list(WINDOWS))
     parser.add_argument('--no_sample', action='store_true', help='only score and draw what is already sampled')
     parser.add_argument('--sample_args', default='', help='extra arguments for sword/sample.py, quoted')
+    parser.add_argument('--dps_args', default='', help='extra arguments for dps/sample.py, quoted')
     parser.add_argument('--device', default='cuda:0')
     args = parser.parse_args()
     methods = [m for m in args.methods.split(',') if m]
@@ -202,7 +209,7 @@ def main():
 
     def recon_path(s, key, sid):
         """Where a method's reconstruction of a slice lives for a setting."""
-        root = args.out_root if key == 'sword' else args.base_out
+        root = args.out_root if key in SAMPLED_HERE else args.base_out
         return os.path.join(root, s.tag, key, 'recon', sid + '.npy')
 
     results = {}
@@ -221,6 +228,21 @@ def main():
                 cmd = [sys.executable, '-m', 'baselines.sword.sample', '--angle_start', str(s.start),
                        '--angle_end', str(s.end), '--angle_stride', str(s.stride), '--cache_root', args.cache_root,
                        '--out_root', args.out_root, '--device', args.device] + args.sample_args.split()
+                log(f'{s.label}: {" ".join(cmd[2:])}')
+                subprocess.run(cmd, check=True)
+        if 'dps' in methods:
+            out_dir = os.path.join(args.out_root, s.tag, 'dps')
+            os.makedirs(out_dir, exist_ok=True)
+            if s.tag == args.base_setting:
+                n = reuse_reference(os.path.join(args.base_out, args.base_setting, 'dps'), out_dir, ids)
+                if n:
+                    log(f'{s.label}: reused {n} DPS slices from {args.base_out}')
+            if not args.no_sample:
+                prior = args.dps_prior or os.path.join(args.base_out, args.base_setting, 'dolce', 'last.pt')
+                cmd = [sys.executable, '-m', 'baselines.dps.sample', '--angle_start', str(s.start),
+                       '--angle_end', str(s.end), '--angle_stride', str(s.stride), '--cache_root', args.cache_root,
+                       '--out_root', args.out_root, '--device', args.device, '--prior', os.path.abspath(prior),
+                       '--tune_dir', base_sd] + args.dps_args.split()
                 log(f'{s.label}: {" ".join(cmd[2:])}')
                 subprocess.run(cmd, check=True)
         data = SplitData(sd, 'test')

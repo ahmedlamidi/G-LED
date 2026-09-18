@@ -1,6 +1,6 @@
 # Baselines for SD-Flow
 
-Six baselines, each in its own folder, trained and tested on exactly SD-Flow's
+Eight baselines, each in its own folder, trained and tested on exactly SD-Flow's
 data, measured views and label:
 
 | Folder | Method | Trained? | Free parameter |
@@ -11,6 +11,8 @@ data, measured views and label:
 | `fbpconvnet/` | FBPConvNet (Jin et al. 2017) | yes | best val checkpoint |
 | `dolce/` | DOLCE (Liu et al., ICCV 2023) | yes | prox variant and weight, picked on val |
 | `sword/` | SWORD (Xu et al., TMI 2024) | yes (2 models) | none |
+| `dps/` | DPS (Chung et al., ICLR 2023) | no, reuses DOLCE's unconditional branch | step size zeta, picked on val |
+| `dudotrans/` | DuDoTrans (Wang et al., 2021) | yes | best val checkpoint |
 
 ## What is shared, so the comparison is fair
 
@@ -52,6 +54,8 @@ depend only on what's listed in the "After" column.
 | DOLCE sample | `sbatch baselines/dolce/sample.sh` | DOLCE train | ~4 h |
 | SWORD train | `sbatch baselines/sword/train.sh full` and `... high` | prepare | 22 h each, in parallel |
 | SWORD sample | `sbatch baselines/sword/sample.sh` | both SWORD trains | ~5 h |
+| DPS sample | `sbatch baselines/dps/sample.sh` | DOLCE train (its checkpoint is the prior) | ~30 min tuning + ~1 min per slice |
+| DuDoTrans | `sbatch baselines/dudotrans/run.sh` | prepare | up to 20 h (validation patience), test in minutes |
 | SD-Flow sample | `sbatch baselines/sdflow/sample.sh --config configurations/<run>.json` | prepare, a trained SD-Flow | depends on its sampling steps |
 | View sweep | `sbatch baselines/sweep.sh` | both SWORD trains | ~1 h (SWORD on 8 settings x 10 slices) |
 | Per-setting training | `METHOD=dolce sbatch baselines/train_sweep.sh` | prepare | FBPConvNet ~1 day, DOLCE several days, one job at a time |
@@ -83,9 +87,12 @@ the same ids everywhere; no RLS is built for the sweep's own folders.
 * **SWORD** never sees which views are measured, so the pair trained once is
   sampled per setting by the sweep (`sbatch baselines/sweep.sh`, ~1 h). The
   reference setting reuses the full run's slices when present.
-* **DOLCE and FBPConvNet** learn the streaks of the measured views, so they are
+* **DPS** has an unconditional prior, so like SWORD it is sampled per setting by
+  the sweep (`--methods fbp,sword,dps`); zeta is tuned per setting on the base
+  setting's validation slices. About 50 min per setting.
+* **DOLCE, FBPConvNet and DuDoTrans** learn the streaks of the measured views, so they are
   trained per setting with `METHOD=dolce sbatch baselines/train_sweep.sh`
-  (likewise `METHOD=fbpconvnet`): one job, settings one after another,
+  (likewise `METHOD=fbpconvnet`, `METHOD=dudotrans`): one job, settings one after another,
   resubmitting itself across the 24 h wall clock. DOLCE stops on its own when
   the mean training loss of the last 3 h improved on the 3 h before by less
   than 5% (`--plateau_hours`, `--plateau_tol`, `--min_hours 6`, cap
@@ -166,6 +173,56 @@ Results are written to `output/baselines/<setting>/evaluation/`:
     `--official_mean` restores the official behavior.
   - data consistency only writes back measured sinogram rows. The official code
     also copies ground-truth wavelet coefficients, which leaks unmeasured rows.
+* **DPS** follows Algorithm 1 of the paper: ancestral DDPM sampling, and at every
+  step the gradient of ||y - A x0_hat||_2 (the norm, not its square) with respect
+  to x_t, backpropagated through the denoiser. Differences:
+  - the prior is DOLCE's network with its condition zeroed (DOLCE trains with 20%
+    condition dropout, so that branch is an unconditional model of the labels), not
+    a separately trained unconditional model. `dolce/train.py --p_uncond 1 --name
+    dps_prior` trains a dedicated one, used with `--prior`.
+  - 1000 reverse steps as in the paper, by respacing DOLCE's T = 2000 schedule
+    (every 2nd timestep) the way guided-diffusion does
+  - A is the fan-beam projector in physical units (label + K), y = s + 1; its
+    gradient comes from ASTRA's backprojection, which on the GPU is only
+    approximately the adjoint of its projection
+  - the gradient is divided by ||A|| and by the image normalization's scale so that
+    zeta is comparable across view settings; zeta is then picked on 4 validation
+    slices from {0.3, 1, 3, 10, 30} by SSIM inside the body. The paper sets zeta by
+    hand per task and has no CT experiment.
+  - the posterior mean uses x0_hat clipped to [-1, 1] (as the official code does);
+    the residual uses the unclipped x0_hat
+  - measurements are noise-free
+* **DuDoTrans** follows the paper's structure, loss and optimizer: SRT with m = 3
+  residual blocks of n = 1 Swin module + conv and Y~ = Y + residual; FBP consistency
+  layer; RIRM with depth 2, width 4 and X~ = RIRM([X~1, X~2]) + X~1; loss L_SRT +
+  L_DC + L_RIRM with both weights 1; Adam 1e-4, batch 1, up to 100 epochs. The
+  official repository is an empty placeholder, so everything else is a choice:
+  - Swin hyperparameters, which the paper does not state: dim 48, 4 heads, window 8,
+    MLP ratio 4, one Swin module = a regular and a shifted-window block. 0.56 M
+    parameters (paper: 0.44 M).
+  - a stride-2 embedding conv and a pixel-shuffle reconstruction in both networks,
+    so attention runs on 360 x 408 sinogram tokens and 256 x 256 image tokens. The
+    sinogram here is 720 x 816, much larger than the paper's; `--patch 1` is full resolution.
+  - the SRT works on the full 720-view sinogram: measured rows in place, rows
+    between two measured rows one stride apart linearly interpolated, rows in larger
+    gaps (outside a limited arc) zero, plus a mask channel. The paper only covers
+    uniform sparse views and does not say how the missing views enter.
+  - the measured rows are written back into the restored sinogram (`--no_data_consistency`
+    turns that off); the paper does not mention it
+  - the consistency layer is a direct fan-beam FBP in torch (`common/torch_ct.py`,
+    exact gradient) instead of the paper's fan-to-parallel rebinning followed by
+    FBP. X~2 is the FBP over all 720 views of the restored sinogram; X~1 is the FBP
+    of the measured views alone.
+  - the learning-rate schedule is not given in the paper: constant 1e-4 here. The best
+    validation epoch is kept, and training stops after 15 epochs without a validation
+    improvement or 20 h, so most settings will not reach 100 epochs.
+  - sinograms enter as s + 1 and images as (label + K) / z_scale, so both are of order 1
+* **`common/torch_ct.py`**: the differentiable operators both methods use. `FanFBP`
+  reconstructs an ASTRA-projected phantom to within 1e-4 of its true values and its
+  backward pass is the exact transpose (checked with gradcheck); on the cluster its
+  output differs slightly from ASTRA's FBP_CUDA (other interpolation and filter
+  discretization), which DuDoTrans's image network absorbs. torch-radon, which the
+  published dual-domain codes depend on, does not build for current GPUs.
 * **FBPConvNet**: the original U-Net with a residual connection. Adam 1e-4 with
   cosine decay replaces the paper's SGD.
 

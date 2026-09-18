@@ -9,7 +9,7 @@
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-user=ahmedlamidi@usf.edu
 #
-# Train one method (METHOD=dolce or METHOD=fbpconvnet) on the sweep's view
+# Train one method (METHOD=dolce, fbpconvnet or dudotrans) on the sweep's view
 # settings, one after another on one GPU: for each setting, prepare the data
 # (skips splits that are up to date), train until the method's own stopping
 # rule (DOLCE: loss plateau, FBPConvNet: validation patience) or the cap, then
@@ -20,6 +20,7 @@
 # The reference setting (45 deg every 10th row) is assumed trained already.
 #
 #   METHOD=fbpconvnet sbatch baselines/train_sweep.sh     # ~1 day in total
+#   METHOD=dudotrans sbatch baselines/train_sweep.sh      # validation patience, DUDO_HOURS cap per setting
 #   METHOD=dolce sbatch baselines/train_sweep.sh          # several days, one job at a time
 #   METHOD=dolce SETTINGS="0 45 1;0 90 1" sbatch baselines/train_sweep.sh   # a subset
 #
@@ -30,10 +31,11 @@
 
 [ -f baselines/cluster/env.sh ] || { echo "Submit from the repo root: METHOD=dolce sbatch baselines/train_sweep.sh"; exit 1; }
 source baselines/cluster/env.sh
-: "${METHOD:?set METHOD=dolce or METHOD=fbpconvnet}"
+: "${METHOD:?set METHOD=dolce, fbpconvnet or dudotrans}"
 SETTINGS="${SETTINGS:-0 45 1;0 90 1;0 270 1;0 360 2;0 360 4;0 360 8;0 360 10}"
 DOLCE_HOURS="${DOLCE_HOURS:-22}"          # cap; the plateau rule usually stops earlier
 FBPCONV_HOURS="${FBPCONV_HOURS:-12}"
+DUDO_HOURS="${DUDO_HOURS:-20}"
 MAX_RESUBMITS="${MAX_RESUBMITS:-12}"
 BASE_SETTING="${BASE_SETTING:-limited0-45_stride10}"
 # patients per split, read from the base setting so every setting has the same split
@@ -75,6 +77,7 @@ for spec in "${LIST[@]}"; do
 	case "$METHOD" in
 		dolce)      IMAGES=label,rls ;;
 		fbpconvnet) IMAGES=label,fbp_in ;;
+		dudotrans)  IMAGES=label ;;          # it reads the cached sinograms; nothing else to write
 		*) echo "unknown METHOD $METHOD"; exit 1 ;;
 	esac
 	# One prepare at a time per setting: two jobs writing the same memory-mapped arrays
@@ -103,14 +106,18 @@ for spec in "${LIST[@]}"; do
 			fbpconvnet) [ "$LEFT" -lt 3 ] && resubmit
 			            run baselines.fbpconvnet.train "${ANGLES[@]}" --hours "$FBPCONV_HOURS" \
 			                || fail "training failed for $TAG" ;;
+			dudotrans)  [ "$LEFT" -lt 3 ] && resubmit
+			            run baselines.dudotrans.train "${ANGLES[@]}" --hours "$(( LEFT < DUDO_HOURS ? LEFT : DUDO_HOURS ))" \
+			                || fail "training failed for $TAG" ;;
 		esac
 		[ -f "$OUT/train_done" ] || resubmit     # segment ended before the stopping rule: continue next job
 	fi
 	case "$METHOD" in
 		dolce)      run baselines.dolce.sample "${ANGLES[@]}" || fail "sampling failed for $TAG" ;;
 		fbpconvnet) run baselines.fbpconvnet.test "${ANGLES[@]}" || fail "test failed for $TAG" ;;
+		dudotrans)  run baselines.dudotrans.test "${ANGLES[@]}" || fail "test failed for $TAG" ;;
 	esac
-	if [ "${CLEAN:-1}" = "1" ]; then
+	if [ "${CLEAN:-1}" = "1" ] && [ "$METHOD" != dudotrans ]; then
 		# the method's training/validation input arrays (~2.8 GB per setting) are not needed any more;
 		# the test split and the shared label stay. prepare rebuilds them if a run is ever repeated.
 		INPUT=$([ "$METHOD" = dolce ] && echo rls || echo fbp_in)

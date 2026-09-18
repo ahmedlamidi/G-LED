@@ -747,8 +747,12 @@ class ImagenTrainer(nn.Module):
 
         #save to path
 
-        with fs.open(path, 'wb') as f:
+        # write beside the target and rename, so a job killed mid-save keeps the old checkpoint
+
+        tmp_path = str(path) + '.tmp'
+        with fs.open(tmp_path, 'wb') as f:
             torch.save(save_obj, f)
+        fs.mv(tmp_path, str(path))
 
         self.print(f'checkpoint saved to {path}')
 
@@ -1013,7 +1017,8 @@ class ImagenTrainer(nn.Module):
                     
                 loss = loss * chunk_size_frac
 
-            total_loss += loss.item()
+            # accumulated on the GPU: .item() here would stall it every iteration
+            total_loss = total_loss + loss.detach()
 
             if self.training:
                 self.accelerator.backward(loss)

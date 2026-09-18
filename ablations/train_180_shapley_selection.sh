@@ -40,6 +40,7 @@ export TMP=/home/a/ahmedlamidi/tmp
 # ── ABLATION KNOBS ──────────────────────────────────────────────────────────
 # At sample_H = 720 one index is 0.5 deg, so stride 10 keeps every 10th index,
 # i.e. one view per 5 deg.
+PHYSICS_GEOMETRY=fan      # unused while the physics loss is off
 RUN_FOLDER=output/720_816_limited180_SHAPLEY_SELECTION
 ANGLE_START=0
 ANGLE_END=180
@@ -47,11 +48,14 @@ ANGLE_STRIDE=10           # -> 36 of 720 views
 PHYSICS_LOSS_WEIGHT=0
 PHYSICS_ANCHOR=selected   # anchor the symmetry on the conditioned rows
 # Held fixed across the whole grid, so the runs stay comparable.
+# The baselines' train split (baselines/prepare_data.py); the slices do not depend on the setting.
+SLICES_JSON=${SLICES_JSON:-data/baselines_cache/limited0-45_stride10/train/slices.json}
 BATCH_SIZE=8
 EPOCH_NUM=500
+PLATEAU_HOURS=${PLATEAU_HOURS:-3}   # early stopping window; PLATEAU_HOURS=0 trains all EPOCH_NUM epochs
 UNET_DIM=32
 WANDB_PROJECT="sinogram-ablations"
-WANDB_RUN_NAME="abl-45-shapley"
+WANDB_RUN_NAME="abl-180-shapley"
 # ────────────────────────────────────────────────────────────────────────────
 
 # Call the env's interpreter by absolute path so srun cannot fall back to
@@ -144,8 +148,11 @@ srun --export=ALL "$PY" main_diff_bfs.py \
 	--angle_stride "$ANGLE_STRIDE" \
 	--physics_loss_weight "$PHYSICS_LOSS_WEIGHT" \
 	--physics_anchor "$PHYSICS_ANCHOR" \
+	--physics_geometry "$PHYSICS_GEOMETRY" \
+	--slices_json "$SLICES_JSON" \
 	--batch_size "$BATCH_SIZE" \
 	--epoch_num "$EPOCH_NUM" \
+	--plateau_hours "$PLATEAU_HOURS" \
 	--unet_dim "$UNET_DIM" \
 	--wandb_project "$WANDB_PROJECT" \
 	--wandb_run_name "$WANDB_RUN_NAME" \
